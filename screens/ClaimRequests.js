@@ -196,19 +196,20 @@ const ClaimRequestScreen = ({ navigation }) => {
     >
       <View style={styles.imageContainer}>
         <Image 
-          source={{ uri: item.image }} 
+          source={{ uri: item.images && item.images.length > 0 ? item.images[0].url : null }} 
           style={styles.cardImage} 
           resizeMode="cover" 
         />
       </View>
       <View style={styles.cardDetails}>
         <Text style={styles.itemName} numberOfLines={1}>{item.itemName}</Text>
+        <Text style={styles.itemDetail}>Claim by: {item.userName}</Text>
+        <Text style={styles.itemDetail}>Date Requested: {item.dateFound}</Text>
         <Text style={[styles.itemDetail, styles.statusText]}>
           Status: <Text style={item.status === 'pending' ? styles.pendingStatus : item.status === 'approved' ? styles.approvedStatus : styles.rejectedStatus}>
             {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
           </Text>
         </Text>
-        <Text style={styles.viewMore}>Tap to view more details →</Text>
       </View>
     </TouchableOpacity>
   );
@@ -217,11 +218,26 @@ const ClaimRequestScreen = ({ navigation }) => {
     <Modal visible={modalVisible} transparent animationType="fade">
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
-          <Image 
-            source={{ uri: selectedClaim?.image }} 
-            style={styles.modalImage} 
-            resizeMode="contain" 
-          />
+          {selectedClaim?.images && selectedClaim.images.length > 0 ? (
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              style={styles.modalImageScrollView}
+            >
+              {selectedClaim.images.map((image, index) => (
+                <Image 
+                  key={index}
+                  source={{ uri: image.url }} 
+                  style={styles.modalImage} 
+                  resizeMode="contain" 
+                />
+              ))}
+            </ScrollView>
+          ) : (
+            <View style={styles.noImageContainer}>
+              <Text style={styles.noImageText}>No image available</Text>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.modalCloseIcon} onPress={() => setModalVisible(false)}>
             <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>X</Text>
@@ -260,59 +276,55 @@ const ClaimRequestScreen = ({ navigation }) => {
     <SafeAreaView style={styles.container}>
       <Header navigation={navigation} />
 
-      <View style={styles.mainWrapper}>
-        {/* Sidebar */}
-        <View style={styles.sidebarContainer}>
+      <View style={styles.menuWrapper}>
+        <View style={styles.sidebarWrapper}>
           <SidebarMenu navigation={navigation} />
         </View>
-
-        {/* Main Content */}
-        <View style={styles.content}>
-          <Text style={styles.title}>CLAIM REQUEST</Text>
-
-          {/* Search */}
-          <View style={styles.searchContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search for a keyword"
-              value={searchText}
-              onChangeText={setSearchText}
-            />
-            <Ionicons name="search" size={20} color="black" style={styles.searchIcon} />
-          </View>
-
-          {/* Status Tabs */}
-          <View style={styles.tabContainer}>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'pending' && styles.activeTab]}
-              onPress={() => setActiveTab('pending')}
-            >
-              <Text style={[styles.tabText, activeTab === 'pending' && styles.activeTabText]}>Pending</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'approved' && styles.activeTab]}
-              onPress={() => setActiveTab('approved')}
-            >
-              <Text style={[styles.tabText, activeTab === 'approved' && styles.activeTabText]}>Approved</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tab, activeTab === 'rejected' && styles.activeTab]}
-              onPress={() => setActiveTab('rejected')}
-            >
-              <Text style={[styles.tabText, activeTab === 'rejected' && styles.activeTabText]}>Rejected</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Cards */}
-          <ScrollView style={styles.scrollView}>
-            {filteredClaims.length === 0 ? (
-              <Text style={styles.noItemsText}>No {activeTab} claims found</Text>
-            ) : (
-              filteredClaims.map((item) => renderCard(item))
-            )}
-          </ScrollView>
-        </View>
       </View>
+
+      <Text style={styles.title}>CLAIM REQUEST</Text>
+
+      {/* Search */}
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search for a keyword"
+          value={searchText}
+          onChangeText={setSearchText}
+        />
+        <Ionicons name="search" size={20} color="black" style={styles.searchIcon} />
+      </View>
+
+      {/* Status Tabs */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'pending' && styles.activeTab]}
+          onPress={() => setActiveTab('pending')}
+        >
+          <Text style={[styles.tabText, activeTab === 'pending' && styles.activeTabText]}>Pending</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'approved' && styles.activeTab]}
+          onPress={() => setActiveTab('approved')}
+        >
+          <Text style={[styles.tabText, activeTab === 'approved' && styles.activeTabText]}>Approved</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'rejected' && styles.activeTab]}
+          onPress={() => setActiveTab('rejected')}
+        >
+          <Text style={[styles.tabText, activeTab === 'rejected' && styles.activeTabText]}>Rejected</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Cards */}
+      <ScrollView style={styles.scrollView}>
+        {filteredClaims.length === 0 ? (
+          <Text style={styles.noItemsText}>No {activeTab} claims found</Text>
+        ) : (
+          filteredClaims.map((item) => renderCard(item))
+        )}
+      </ScrollView>
 
       {renderModal()}
     </SafeAreaView>
@@ -321,53 +333,84 @@ const ClaimRequestScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
     backgroundColor: '#D9D9D9',
-    flex: 1,
   },
-  mainWrapper: {
-    flex: 1,
-    flexDirection: 'row',
+  menuWrapper: {
+    position: 'absolute',
+    top: 130,
+    left: 10,
+    zIndex: 999,
   },
-  sidebarContainer: {
+  sidebarWrapper: {
     width: 55,
-    paddingTop: 40,
-    marginLeft: 10,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
+    height: 45,
+    backgroundColor: 'transparent',
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   title: {
     fontSize: 25,
     fontWeight: 'bold',
-    alignSelf: 'center',
-    marginVertical: 10,
-    marginTop: 20,
-    marginLeft: '-15%',
-    marginBottom: 40,
+    textAlign: 'center',
+    marginTop: 45,
+    marginBottom: 20,
   },
   searchContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: 5,
-    paddingHorizontal: 10,
-    marginBottom: 10,
-    width: '100%',
-    marginLeft: '-10%',
-    marginRight: '10%',
+    borderRadius: 25,
+    alignItems: 'center',
+    marginVertical: 15,
+    paddingHorizontal: 15,
+    width: '90%',
+    height: 45,
+    alignSelf: 'center',
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+   
   },
   searchInput: {
     flex: 1,
-    height: 40,
+    padding: 10,
+    fontSize: 16,
   },
   searchIcon: {
-    marginLeft: 5,
+    width: 20,
+    height: 20,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    marginBottom: 15,
+    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    marginHorizontal: 5,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    alignItems: 'center',
+  },
+  activeTab: {
+    backgroundColor: '#007BFF',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#666',
+  },
+  activeTabText: {
+    color: '#fff',
   },
   scrollView: {
     flex: 1,
-    paddingHorizontal: 10,
+    paddingHorizontal: 15,
   },
   horizontalCard: {
     flexDirection: 'row',
@@ -380,11 +423,11 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 3,
     overflow: 'hidden',
-    height: 100,
+    height: 120,
   },
   imageContainer: {
-    width: 100,
-    height: '100%',
+    width: 120,
+    height: 120,
     backgroundColor: '#f0f0f0',
     padding: 8,
   },
@@ -396,18 +439,18 @@ const styles = StyleSheet.create({
   cardDetails: {
     flex: 1,
     padding: 15,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
   },
   itemName: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#333',
-    marginBottom: 5,
+    marginBottom: 3,
   },
   itemDetail: {
     fontSize: 14,
     color: '#666',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   viewMore: {
     fontSize: 13,
@@ -444,11 +487,16 @@ const styles = StyleSheet.create({
     padding: 20,
     position: 'relative',
   },
+  modalImageScrollView: {
+    width: '100%',
+    height: 200,
+    marginBottom: 20,
+  },
   modalImage: {
-    width: 280,
+    width: 200,
     height: 200,
     resizeMode: 'contain',
-    marginBottom: 20,
+    marginHorizontal: 5,
   },
   modalCloseIcon: {
     position: 'absolute',
@@ -510,31 +558,6 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     alignItems: 'center',
   },
-  tabContainer: {
-    flexDirection: 'row',
-    marginBottom: 15,
-    paddingHorizontal: 16,
-    justifyContent: 'space-between',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 10,
-    marginHorizontal: 5,
-    borderRadius: 5,
-    backgroundColor: '#f0f0f0',
-    alignItems: 'center',
-  },
-  activeTab: {
-    backgroundColor: '#007BFF',
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#666',
-  },
-  activeTabText: {
-    color: '#fff',
-  },
   noItemsText: {
     textAlign: 'center',
     fontSize: 16,
@@ -552,6 +575,15 @@ const styles = StyleSheet.create({
     padding: 10,
     minHeight: 80,
     textAlignVertical: 'top',
+  },
+  noImageContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  noImageText: {
+    fontSize: 16,
+    color: '#666',
   },
 });
 

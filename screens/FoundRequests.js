@@ -184,19 +184,20 @@ const FoundRequests = ({ navigation }) => {
     >
       <View style={styles.imageContainer}>
         <Image 
-          source={{ uri: item.image }} 
+          source={{ uri: item.images && item.images.length > 0 ? item.images[0].url : null }} 
           style={styles.cardImage} 
           resizeMode="cover" 
         />
       </View>
       <View style={styles.cardDetails}>
         <Text style={styles.itemName} numberOfLines={1}>{item.itemName}</Text>
+        <Text style={styles.itemDetail}>Found by: {item.userName}</Text>
+        <Text style={styles.itemDetail}>Date Found: {item.dateFound}</Text>
         <Text style={[styles.itemDetail, styles.statusText]}>
           Status: <Text style={item.status === 'pending' ? styles.pendingStatus : item.status === 'approved' ? styles.approvedStatus : styles.rejectedStatus}>
             {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
           </Text>
         </Text>
-        <Text style={styles.viewMore}>Tap to view more details →</Text>
       </View>
     </TouchableOpacity>
   );
@@ -210,11 +211,26 @@ const FoundRequests = ({ navigation }) => {
     >
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
-          <Image 
-            source={{ uri: selectedItem?.image }} 
-            style={styles.modalImage} 
-            resizeMode="contain" 
-          />
+          {selectedItem?.images && selectedItem.images.length > 0 ? (
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              style={styles.modalImageScrollView}
+            >
+              {selectedItem.images.map((image, index) => (
+                <Image 
+                  key={index}
+                  source={{ uri: image.url }} 
+                  style={styles.modalImage} 
+                  resizeMode="contain" 
+                />
+              ))}
+            </ScrollView>
+          ) : (
+            <View style={styles.noImageContainer}>
+              <Text style={styles.noImageText}>No image available</Text>
+            </View>
+          )}
 
           <TouchableOpacity style={styles.modalCloseIcon} onPress={() => setModalVisible(false)}>
             <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>X</Text>
@@ -311,56 +327,80 @@ const FoundRequests = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
     backgroundColor: '#D9D9D9',
   },
   headerContainer: {
     flexDirection: 'row',
-    alignItems: 'center', // Align items vertically in the center
-    marginBottom: 20,
-    marginTop: 10,
+    marginTop: 20,
   },
   sidebarWrapper: {
-    marginRight: 10,
-    marginTop: 20, // Add spacing between the sidebar and the title
+    width: 55,
+    paddingTop: 40,
+    marginLeft: 10,
   },
   titleWrapper: {
-    flex: 1, // Allow the title to take up the remaining space
-    alignItems: 'center', // Center the title horizontally
+    flex: 1,
+    alignItems: 'center',
   },
   title: {
-    fontSize: 20,
+    fontSize: 25,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginTop: 0, 
-    
+    marginTop: 20,
   },
   searchContainer: {
     flexDirection: 'row',
     backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: 'grey',
-    borderRadius: 5,
+    borderRadius: 25,
     alignItems: 'center',
     marginVertical: 15,
-    paddingHorizontal: 10,
-    width: '80%',
-    height: 40,
+    paddingHorizontal: 15,
+    width: '90%',
+    height: 45,
     alignSelf: 'center',
-    marginBottom: 3,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
   },
   searchInput: {
     flex: 1,
-    padding: 0,
+    padding: 10,
     fontSize: 16,
   },
   searchIcon: {
-    width: 30,
-    height: 30, // Adjust the size of the image as needed
+    width: 20,
+    height: 20,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    marginBottom: 15,
+    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    marginHorizontal: 5,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    alignItems: 'center',
+  },
+  activeTab: {
+    backgroundColor: '#007BFF',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#666',
+  },
+  activeTabText: {
+    color: '#fff',
   },
   scrollView: {
     flex: 1,
-    paddingHorizontal: 10,
+    paddingHorizontal: 15,
   },
   horizontalCard: {
     flexDirection: 'row',
@@ -373,11 +413,11 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 3,
     overflow: 'hidden',
-    height: 100,
+    height: 120,
   },
   imageContainer: {
-    width: 100,
-    height: '100%',
+    width: 120,
+    height: 120,
     backgroundColor: '#f0f0f0',
     padding: 8,
   },
@@ -389,7 +429,7 @@ const styles = StyleSheet.create({
   cardDetails: {
     flex: 1,
     padding: 15,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
   },
   itemName: {
     fontSize: 18,
@@ -434,11 +474,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  modalImageScrollView: {
+    width: '100%',
+    height: 200,
+    marginBottom: 10,
+  },
   modalImage: {
-    width: 280, // Increased width for better visibility
-    height: 200, // Increased height for better visibility
+    width: 200,
+    height: 200,
     resizeMode: 'contain',
-    marginBottom: 10, // Add spacing below the image
+    marginHorizontal: 5,
   },
   modalDetails: {
     width: '100%',
@@ -468,7 +513,7 @@ const styles = StyleSheet.create({
   },
   actionButtons: {
     flexDirection: 'row',
-    marginTop: 15,
+    marginTop: 5,
     justifyContent: 'space-between',
     width: '90%',
   },
@@ -487,32 +532,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 5,
     alignItems: 'center',
-  },
-  tabContainer: {
-    marginTop: 10,
-    flexDirection: 'row',
-    marginBottom: 15,
-    paddingHorizontal: 16,
-    justifyContent: 'space-between',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 10,
-    marginHorizontal: 5,
-    borderRadius: 5,
-    backgroundColor: '#f0f0f0',
-    alignItems: 'center',
-  },
-  activeTab: {
-    backgroundColor: '#007BFF',
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#666',
-  },
-  activeTabText: {
-    color: '#fff',
   },
   noItemsText: {
     textAlign: 'center',
@@ -546,6 +565,15 @@ const styles = StyleSheet.create({
     padding: 10,
     minHeight: 80,
     textAlignVertical: 'top',
+  },
+  noImageContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  noImageText: {
+    fontSize: 16,
+    color: '#666',
   },
 });
 
