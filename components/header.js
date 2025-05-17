@@ -2,27 +2,117 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity, Modal, Alert, StatusBar, SafeAreaView } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { logout } from '../utils/auth'; // Import the logout function from utils/auth
+import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
+import { db, auth } from '../firebaseConfig';
+import { onAuthStateChanged } from 'firebase/auth';
 
 const Header = () => {
     const [menuVisible, setMenuVisible] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
     const [loginReminderModalVisible, setLoginReminderModalVisible] = useState(false);
     const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
     const navigation = useNavigation();
 
+    // Listen for auth state changes
     useEffect(() => {
-        const checkLoginStatus = async () => {
-            const userToken = await AsyncStorage.getItem('userToken');
-            setIsLoggedIn(!!userToken); // Update login state
-        };
-        checkLoginStatus();
+        const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+            setIsLoggedIn(!!user);
+        });
+
+        return () => unsubscribeAuth();
     }, []);
 
+    // Listen for unread notifications
+    useEffect(() => {
+        let unsubscribe = null;
+        
+        const loadUnreadCount = async () => {
+            try {
+                if (!isLoggedIn) {
+                    setUnreadCount(0);
+                    return;
+                }
+
+                // Load notifications from AsyncStorage only when logged in
+                const storedNotifications = await AsyncStorage.getItem('notifications');
+                if (storedNotifications) {
+                    const notifications = JSON.parse(storedNotifications);
+                    const unreadCount = notifications.filter(n => n.status === 'unread').length;
+                    setUnreadCount(unreadCount);
+                }
+
+                if (auth.currentUser) {
+                    // Create a query for user's notifications
+                    const notificationsQuery = query(
+                        collection(db, 'notifications'),
+                        where('userId', '==', auth.currentUser.uid),
+                        where('status', '==', 'unread')
+                    );
+
+                    unsubscribe = onSnapshot(notificationsQuery, async (snapshot) => {
+                        const unreadCount = snapshot.docs.length;
+                        setUnreadCount(unreadCount);
+
+                        // Update AsyncStorage with new notifications
+                        const storedNotifications = await AsyncStorage.getItem('notifications');
+                        let notifications = storedNotifications ? JSON.parse(storedNotifications) : [];
+                        
+                        // Update or add new notifications
+                        for (const doc of snapshot.docs) {
+                            const newNotification = {
+                                id: doc.id,
+                                ...doc.data(),
+                                createdAt: doc.data().createdAt?.toDate?.()?.toLocaleString() || 'N/A'
+                            };
+                            
+                            const existingIndex = notifications.findIndex(n => n.id === doc.id);
+                            if (existingIndex >= 0) {
+                                notifications[existingIndex] = newNotification;
+                            } else {
+                                notifications.push(newNotification);
+                            }
+                        }
+
+                        await AsyncStorage.setItem('notifications', JSON.stringify(notifications));
+                    }, (error) => {
+                        console.error('Error fetching notifications:', error);
+                    });
+                }
+            } catch (error) {
+                console.error('Error setting up notification listener:', error);
+            }
+        };
+
+        loadUnreadCount();
+
+        return () => {
+            if (unsubscribe) {
+                unsubscribe();
+            }
+        };
+    }, [isLoggedIn]);
+
     const handleLogout = async () => {
-        await AsyncStorage.removeItem('userToken'); // Clear the user token
-        setLogoutModalVisible(false); // Close the modal
-        setIsLoggedIn(false); // Update login state
-        navigation.navigate('Login'); // Navigate to the login screen
+        try {
+            // Don't clear notifications on logout
+            const { success } = await logout();
+            if (success) {
+                setLogoutModalVisible(false);
+                setIsLoggedIn(false);
+                setMenuVisible(false);
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Login' }],
+                });
+            } else {
+                Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+        } catch (error) {
+            console.error('Logout error:', error);
+            Alert.alert('Error', 'An unexpected error occurred during logout.');
+        }
     };
 
     const handleLoginReminder = () => {
@@ -53,9 +143,16 @@ const Header = () => {
                         <Text style={styles.subtitle}>Discover. Connect. Reclaim</Text>
                     </View>
 
-                    {/* Hamburger Icon */}
+                    {/* Hamburger Icon with Notification Indicator */}
                     <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.menuButton}>
-                        <Image source={require('../assets/menuicon.png')} style={styles.icon} />
+                        <View style={styles.menuIconContainer}>
+                            <Image source={require('../assets/menuicon.png')} style={styles.icon} />
+                            {isLoggedIn && unreadCount > 0 && (
+                                <View style={styles.notificationBadge}>
+                                    <Text style={styles.notificationBadgeText}>{unreadCount}</Text>
+                                </View>
+                            )}
+                        </View>
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>
@@ -103,8 +200,15 @@ const Header = () => {
                                 style={styles.menuItem}
                                 onPress={() => handleMenuItemPress('Notifications')} // Navigate to Notifications
                             >
-                                <Image source={require('../assets/notificationicon.png')} style={styles.menuIcon} />
-                                <Text style={styles.menuText}>Notifications</Text>
+                                <View style={styles.menuItemWithBadge}>
+                                    <Image source={require('../assets/notificationicon.png')} style={styles.menuIcon} />
+                                    <Text style={styles.menuText}>Notifications</Text>
+                                    {isLoggedIn && unreadCount > 0 && (
+                                        <View style={styles.menuNotificationBadge}>
+                                            <Text style={styles.menuNotificationBadgeText}>{unreadCount}</Text>
+                                        </View>
+                                    )}
+                                </View>
                             </TouchableOpacity>
 
                             {/* Profile Button */}
@@ -369,6 +473,46 @@ const styles = StyleSheet.create({
     },
     okButtonText: {
         color: '#fff',
+        fontWeight: 'bold',
+    },
+    menuIconContainer: {
+        position: 'relative',
+    },
+    notificationBadge: {
+        position: 'absolute',
+        top: -5,
+        right: -5,
+        backgroundColor: '#FF3B30',
+        borderRadius: 10,
+        minWidth: 20,
+        height: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#fff',
+    },
+    notificationBadgeText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    menuItemWithBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        position: 'relative',
+    },
+    menuNotificationBadge: {
+        backgroundColor: '#FF3B30',
+        borderRadius: 10,
+        minWidth: 20,
+        height: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 10,
+    },
+    menuNotificationBadgeText: {
+        color: '#fff',
+        fontSize: 12,
         fontWeight: 'bold',
     },
 });

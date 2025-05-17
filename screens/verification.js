@@ -16,6 +16,10 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import CheckBox from 'expo-checkbox';
 import Header from '../components/header';
 import Footer from '../components/footer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { auth } from '../firebaseConfig';
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 
 const VerificationForm = ({ navigation, route }) => {
     const { verificationType = 'Lost Item Verification', itemId, onSubmit } = route.params || {}; // Default to "Lost Item Verification"
@@ -57,7 +61,7 @@ const VerificationForm = ({ navigation, route }) => {
         }
     };
 
-    const handleSubmit = () => {
+    const handleSubmit = async () => {
         if (!certified) {
             Alert.alert('Certification Required', 'Please certify that the information provided is truthful.');
             return;
@@ -68,9 +72,86 @@ const VerificationForm = ({ navigation, route }) => {
             return;
         }
 
-        Alert.alert('Success', `${verificationType} submitted successfully!`);
-        if (onSubmit) onSubmit(); // Call the onSubmit callback to update the button state
-        navigation.goBack();
+        try {
+            const userProfile = await AsyncStorage.getItem('userProfile');
+            if (!userProfile) {
+                Alert.alert('Error', 'User profile not found. Please log in again.');
+                return;
+            }
+
+            const { name: userName, email: userEmail } = JSON.parse(userProfile);
+            const currentUser = auth.currentUser;
+
+            if (!currentUser) {
+                Alert.alert('Error', 'You must be logged in to submit verification.');
+                return;
+            }
+
+            // Create verification document
+            const verificationData = {
+                itemId,
+                itemName: form.itemName,
+                dateFound: form.dateFound,
+                timeFound: form.timeFound,
+                location: form.location,
+                contact: form.contact,
+                description: form.description,
+                image: form.image,
+                userId: currentUser.uid,
+                userName,
+                userEmail,
+                verificationType,
+                status: 'pending',
+                createdAt: serverTimestamp()
+            };
+
+            // Add to appropriate collection based on verification type
+            const collectionName = verificationType === 'Lost Item Verification' ? 'found_requests' : 'claim_requests';
+            const docRef = await addDoc(collection(db, collectionName), verificationData);
+
+            // Create single notification for the request
+            const notificationData = {
+                userId: currentUser.uid,
+                type: verificationType === 'Lost Item Verification' ? 'found_request_submitted' : 'claim_request_submitted',
+                title: verificationType === 'Lost Item Verification' ? 'Found Item Request Submitted' : 'Claim Request Submitted',
+                message: verificationType === 'Lost Item Verification' 
+                    ? `Your request to report finding the item "${form.itemName}" has been submitted. We will review your request and notify you of any updates.`
+                    : `Your request to claim the item "${form.itemName}" has been submitted. We will review your request and notify you of any updates.`,
+                itemId: docRef.id,
+                itemName: form.itemName,
+                status: 'unread',
+                createdAt: serverTimestamp()
+            };
+            await addDoc(collection(db, 'notifications'), notificationData);
+
+            // Create activity for admin dashboard
+            const activityData = {
+                type: verificationType === 'Lost Item Verification' ? 'found_request_submitted' : 'claim_request_submitted',
+                description: `${userName} submitted a ${verificationType.toLowerCase()} for ${form.itemName}`,
+                itemId: docRef.id,
+                itemName: form.itemName,
+                userId: currentUser.uid,
+                userName,
+                userEmail,
+                status: 'unread',
+                title: 'New Request Submitted',
+                message: `${userName} has submitted a ${verificationType.toLowerCase()} for ${form.itemName}`,
+                createdAt: serverTimestamp()
+            };
+            await addDoc(collection(db, 'activities'), activityData);
+
+            Alert.alert(
+                'Success',
+                `${verificationType} submitted successfully!`,
+                [{ text: 'OK', onPress: () => {
+                    if (onSubmit) onSubmit();
+                    navigation.goBack();
+                }}]
+            );
+        } catch (error) {
+            console.error('Error submitting verification:', error);
+            Alert.alert('Error', 'Failed to submit verification. Please try again.');
+        }
     };
 
     const handleReset = () => {

@@ -7,6 +7,8 @@ import {
     Image,
     Alert,
     ScrollView,
+    Modal,
+    Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Header from '../components/header';
@@ -15,6 +17,8 @@ import SearchBar from '../components/searchbar';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, where } from 'firebase/firestore';
+import { db, auth } from '../firebaseConfig';
 
 const LostPage = () => {
     const navigation = useNavigation();
@@ -22,7 +26,10 @@ const LostPage = () => {
     const [lostItems, setLostItems] = useState([]);
     const [filteredItems, setFilteredItems] = useState([]);
     const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const [submittedItems, setSubmittedItems] = useState({}); // Track submitted state for each item
+    const [submittedItems, setSubmittedItems] = useState({});
+    const [selectedImage, setSelectedImage] = useState(null);
+    const [imageViewerVisible, setImageViewerVisible] = useState(false);
+    const [userFoundStatus, setUserFoundStatus] = useState({});
 
     useEffect(() => {
         const checkLoginStatus = async () => {
@@ -30,33 +37,63 @@ const LostPage = () => {
             setIsLoggedIn(!!userToken);
         };
         checkLoginStatus();
-    }, []);
 
-    const fetchLostItems = async () => {
+        // Load user's found status
+        if (auth.currentUser) {
+            const userStatusRef = collection(db, 'user_found_status');
+            const q = query(userStatusRef, where('userId', '==', auth.currentUser.uid));
+            
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const statusData = {};
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    statusData[data.itemId] = data.status;
+                });
+                setUserFoundStatus(statusData);
+            });
+
+            return () => unsubscribe();
+        }
+    }, [auth.currentUser]);
+
+    const fetchLostItems = () => {
         try {
-            const items = await AsyncStorage.getItem('lostItems');
-            if (items) {
-                const parsedItems = JSON.parse(items);
-                setLostItems(parsedItems);
-                setFilteredItems(parsedItems);
-            }
+            // Create a query to get lost items, ordered by creation time
+            const q = query(
+                collection(db, 'lost_items'),
+                orderBy('createdAt', 'desc')
+            );
+
+            // Set up real-time listener
+            const unsubscribe = onSnapshot(q, (querySnapshot) => {
+                const items = [];
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    items.push({
+                        id: doc.id,
+                        ...data,
+                        dateLost: data.dateLost?.toDate?.()?.toLocaleDateString() || 'N/A',
+                        timeLost: data.timeLost?.toDate?.()?.toLocaleTimeString() || 'N/A',
+                    });
+                });
+                setLostItems(items);
+                setFilteredItems(items);
+            });
+
+            // Return unsubscribe function
+            return unsubscribe;
         } catch (error) {
             console.error('Failed to fetch lost items:', error);
+            Alert.alert('Error', 'Failed to load lost items. Please try again.');
         }
     };
 
-    const handleNewItem = async (newItem) => {
-        try {
-            const existingItems = await AsyncStorage.getItem('lostItems');
-            const parsedItems = existingItems ? JSON.parse(existingItems) : [];
-            const updatedItems = [newItem, ...parsedItems]; // Append new item to the list
-            await AsyncStorage.setItem('lostItems', JSON.stringify(updatedItems));
-            setLostItems(updatedItems); // Update state
-            setFilteredItems(updatedItems); // Update filtered items
-        } catch (error) {
-            console.error('Failed to add new item:', error);
-        }
-    };
+    useFocusEffect(
+        React.useCallback(() => {
+            const unsubscribe = fetchLostItems();
+            return () => unsubscribe && unsubscribe();
+        }, [])
+    );
 
     const handleSearch = (query) => {
         setSearchQuery(query);
@@ -64,8 +101,8 @@ const LostPage = () => {
             setFilteredItems(lostItems);
         } else {
             const filtered = lostItems.filter((item) =>
-                item.name.toLowerCase().includes(query.toLowerCase()) ||
-                item.description.toLowerCase().includes(query.toLowerCase())
+                item.name?.toLowerCase().includes(query.toLowerCase()) ||
+                item.description?.toLowerCase().includes(query.toLowerCase())
             );
             setFilteredItems(filtered);
         }
@@ -76,53 +113,98 @@ const LostPage = () => {
             Alert.alert('Login Required', 'Please log in to report a lost item.');
             return;
         }
-        navigation.navigate('ReportLostPage', {
-            onSubmit: handleNewItem,
-        });
+        navigation.navigate('ReportLostPage');
     };
 
-    const handleFoundIt = (itemId) => {
+    const handleFoundIt = async (itemId) => {
+        if (!isLoggedIn) {
+            Alert.alert('Login Required', 'Please log in to report finding an item.');
+            return;
+        }
+
         navigation.navigate('Verification', {
             verificationType: 'Lost Item Verification',
             itemId,
-            onSubmit: () => {
-                setSubmittedItems((prev) => ({ ...prev, [itemId]: true }));
+            onSubmit: async () => {
+                try {
+                    // Create admin notification
+                    await addDoc(collection(db, 'activities'), {
+                        type: 'found_request',
+                        itemId: itemId,
+                        userId: auth.currentUser.uid,
+                        status: 'unread',
+                        title: 'New Found Item Report',
+                        message: `A user has reported finding a lost item.`,
+                        createdAt: serverTimestamp(),
+                        userDetails: {
+                            name: auth.currentUser.displayName || 'Anonymous',
+                            email: auth.currentUser.email
+                        }
+                    });
+
+                    // Store user's found status
+                    await addDoc(collection(db, 'user_found_status'), {
+                        userId: auth.currentUser.uid,
+                        itemId: itemId,
+                        status: 'under_review',
+                        createdAt: serverTimestamp()
+                    });
+
+                    setSubmittedItems((prev) => ({ ...prev, [itemId]: true }));
+                } catch (error) {
+                    console.error('Error creating notifications:', error);
+                    Alert.alert('Error', 'Failed to submit found item report. Please try again.');
+                }
             },
         });
     };
 
-    const renderItem = ({ item }) => {
+    const handleImagePress = (imageUrl) => {
+        // Use the full-size URL if available, otherwise fallback to thumbnail
+        const fullSizeUrl = imageUrl.replace('/upload/', '/upload/q_auto,f_auto/');
+        setSelectedImage(fullSizeUrl);
+        setImageViewerVisible(true);
+    };
+
+    const renderItem = (item) => {
         const isSubmitted = submittedItems[item.id];
+        const userStatus = userFoundStatus[item.id];
+        const isUnderReview = userStatus === 'under_review';
 
         return (
             <View style={styles.itemContainer} key={item.id}>
                 <View style={styles.reporterContainer}>
                     <View style={styles.reporterInitialContainer}>
                         <Text style={styles.reporterInitial}>
-                            {item.reporter ? item.reporter[0].toUpperCase() : '?'}
+                            {item.reporter?.name ? item.reporter.name[0].toUpperCase() : '?'}
                         </Text>
                     </View>
                     <View>
-                        <Text style={styles.reporterName}>{item.reporter || 'Unknown Reporter'}</Text>
+                        <Text style={styles.reporterName}>{item.reporter?.name || 'Unknown Reporter'}</Text>
                         <Text style={styles.reporterDetails}>Reporter</Text>
                     </View>
                 </View>
 
-                <Image
-                    source={
-                        item.name.toLowerCase() === 'vivo'
-                            ? require('../assets/images/vivo.jpg')
-                            : item.name.toLowerCase() === 'wallet'
-                            ? require('../assets/images/wallet.webp')
-                            : item.name.toLowerCase() === 'key'
-                            ? require('../assets/images/key.webp')
-                            : item.image
-                            ? { uri: item.image }
-                            : require('../assets/images/Flashdrive.png')
-                    }
-                    style={styles.itemImage}
-                    resizeMode="cover"
-                />
+                {item.images && item.images.length > 0 && (
+                    <ScrollView 
+                        horizontal 
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.imageScrollView}
+                    >
+                        {item.images.map((image, index) => (
+                            <TouchableOpacity
+                                key={index}
+                                onPress={() => handleImagePress(image.fullSizeUrl || image.url)}
+                            >
+                                <Image
+                                    source={{ uri: image.url }}
+                                    style={styles.itemImage}
+                                    resizeMode="cover"
+                                />
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                )}
 
                 <View style={styles.itemDetailsContainer}>
                     <Text style={[styles.detailValue, styles.itemName]}>{item.name}</Text>
@@ -130,34 +212,25 @@ const LostPage = () => {
                     <Text style={styles.itemDetails}>
                         {item.dateLost} | {item.timeLost}
                     </Text>
-                    <Text style={styles.detailValue}>{item.description}</Text>
+                    <Text style={[styles.detailValue, styles.description]}>{item.description}</Text>
                 </View>
 
                 <TouchableOpacity
                     style={[
                         styles.foundItButton,
+                        isUnderReview && styles.foundUnderReviewButton,
                         isSubmitted && styles.foundItButtonSubmitted,
                     ]}
                     onPress={() => handleFoundIt(item.id)}
-                    disabled={isSubmitted}
+                    disabled={isUnderReview || isSubmitted}
                 >
                     <Text style={styles.foundItButtonText}>
-                        {isSubmitted ? 'Marked as Found' : 'Found It'}
+                        {isUnderReview ? 'Found Under Review' : isSubmitted ? 'Marked as Found' : 'Found It'}
                     </Text>
                 </TouchableOpacity>
             </View>
         );
     };
-
-    useFocusEffect(
-        React.useCallback(() => {
-            const loadItems = async () => {
-                await fetchLostItems();
-            };
-            loadItems();
-        }, [])
-    );
-    
 
     return (
         <LinearGradient
@@ -172,7 +245,6 @@ const LostPage = () => {
                 contentContainerStyle={styles.scrollViewContent}
                 showsVerticalScrollIndicator={true}
             >
-                {/* Search Bar and Report Button */}
                 <View style={styles.searchContainer}>
                     <SearchBar
                         title="Lost Items"
@@ -196,13 +268,36 @@ const LostPage = () => {
                     </TouchableOpacity>
                 </View>
 
-                {/* List of Lost Items */}
                 {filteredItems.length > 0 ? (
-                    filteredItems.map((item) => renderItem({ item }))
+                    filteredItems.map((item) => renderItem(item))
                 ) : (
                     <Text style={styles.emptyListText}>No lost items found.</Text>
                 )}
             </ScrollView>
+
+            {/* Image Viewer Modal */}
+            <Modal
+                visible={imageViewerVisible}
+                transparent={true}
+                onRequestClose={() => setImageViewerVisible(false)}
+            >
+                <View style={styles.imageViewerModal}>
+                    <TouchableOpacity
+                        style={styles.closeButton}
+                        onPress={() => setImageViewerVisible(false)}
+                    >
+                        <Text style={styles.closeButtonText}>✕</Text>
+                    </TouchableOpacity>
+                    
+                    {selectedImage && (
+                        <Image
+                            source={{ uri: selectedImage }}
+                            style={styles.fullScreenImage}
+                            resizeMode="contain"
+                        />
+                    )}
+                </View>
+            </Modal>
 
             <Footer />
         </LinearGradient>
@@ -286,10 +381,11 @@ const styles = StyleSheet.create({
         marginTop: 20,
     },
     itemImage: {
-        width: '100%',
+        width: 280,
         height: 200,
         borderRadius: 10,
-        marginBottom: 10,
+        marginRight: 10,
+        backgroundColor: '#f0f0f0',
     },
     reporterContainer: {
         flexDirection: 'row',
@@ -340,6 +436,45 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         width: '100%',
         marginTop: 10,
+    },
+    description: {
+        marginTop: 15,
+        color: '#555',
+    },
+    imageScrollView: {
+        width: '100%',
+        height: 200,
+        marginVertical: 10,
+    },
+    imageViewerModal: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    fullScreenImage: {
+        width: Dimensions.get('window').width,
+        height: Dimensions.get('window').height,
+    },
+    closeButton: {
+        position: 'absolute',
+        top: 40,
+        right: 20,
+        zIndex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    closeButtonText: {
+        color: '#fff',
+        fontSize: 24,
+        fontWeight: 'bold',
+    },
+    foundUnderReviewButton: {
+        backgroundColor: '#00CB14',
     },
 });
 

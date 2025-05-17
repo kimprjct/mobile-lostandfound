@@ -1,76 +1,248 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, Image, Modal, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, FlatList, TouchableOpacity, StyleSheet, Image, Modal, ScrollView, Alert } from 'react-native';
 import Header from '../components/AdminHeader';  // Import the Header component
 import SidebarMenu from '../components/sidebarmenu'; // Import the SidebarMenu component
 import searchIcon from '../assets/search-icon.png'; // Update the path as needed
 import Phone from '../assets/Phone.png'; // Update the path to your phone image
 import { LinearGradient } from 'expo-linear-gradient'; // Import LinearGradient
-
-// Updated foundData structure with new field names
-const foundData = [
-  {
-    id: '1',
-    itemID: '1',
-    itemName: 'Flashdrive',
-    reportedDate: '2024-12-11',
-    location: 'EB Room 207',
-    foundBy: 'Cameron Servantes',
-    description: 'I would like to inform you that this flashdrive has been found by me.',
-    timeFound: '2:30 pm'
-  },
-  {
-    id: '2',
-    itemID: '2',
-    itemName: 'Record Book',
-    reportedDate: '2024-12-10',
-    location: 'Student Center',
-    foundBy: 'Kimberlyn Pareja',
-    description: 'I found this record book lying on a table in the student center.',
-    timeFound: '1:15 pm'
-  },
-  {
-    id: '3',
-    itemID: '3',
-    itemName: 'Phone',
-    reportedDate: '2024-12-11',
-    location: 'EB Room 208',
-    foundBy: 'James Saavedra',
-    description: 'I would like to inform you that the phone from the lost items has been found by me. It is exactly the same as the one posted there—a Vivo E27 in gray color.',
-    timeFound: '4:30 pm'
-  },
-];
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 
 const FoundRequests = ({ navigation }) => {
   const [searchText, setSearchText] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [activeTab, setActiveTab] = useState('pending');
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [approvalReason, setApprovalReason] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
 
-  const filteredData = foundData.filter(item =>
-    item.itemName.toLowerCase().includes(searchText.toLowerCase()) ||
-    item.foundBy.toLowerCase().includes(searchText.toLowerCase()) ||
-    item.location.toLowerCase().includes(searchText.toLowerCase())
-  );
+  useEffect(() => {
+    // Set up real-time listener for found requests
+    const foundRequestsQuery = query(
+      collection(db, 'found_requests'),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(foundRequestsQuery, (snapshot) => {
+      const foundRequests = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        foundRequests.push({
+          id: doc.id,
+          ...data,
+          dateFound: data.dateFound?.toDate?.()?.toLocaleDateString() || 'N/A',
+          timeFound: data.timeFound?.toDate?.()?.toLocaleTimeString() || 'N/A',
+          createdAt: data.createdAt?.toDate?.()?.toLocaleString() || 'N/A'
+        });
+      });
+      setItems(foundRequests);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const filteredItems = items.filter(item => {
+    const matchesSearch = 
+      item.itemName?.toLowerCase().includes(searchText.toLowerCase()) ||
+      item.userName?.toLowerCase().includes(searchText.toLowerCase()) ||
+      item.location?.toLowerCase().includes(searchText.toLowerCase());
+    
+    const matchesStatus = item.status === activeTab;
+    return matchesSearch && matchesStatus;
+  });
 
   const handleViewItem = (item) => {
     setSelectedItem(item);
     setModalVisible(true);
   };
 
-  const handleApprove = () => {
-    // Implement approve functionality here
-    console.log('Item approved:', selectedItem?.itemID);
-    // You could update a status field, send to an API, etc.
-    alert(`Item ${selectedItem?.itemName} has been approved!`);
-    setModalVisible(false);
+  const handleApprove = async () => {
+    try {
+      // Generate system instructions for claiming
+      const systemInstructions = `Your found item request has been approved!\n\nItem Details:\n- Item Name: ${selectedItem.itemName}\n- Location Found: ${selectedItem.location}\n- Date Found: ${selectedItem.dateFound}\n\nClaiming Instructions:\n1. Visit the Lost and Found Office at the Student Affairs Office (SAO)\n2. Present a valid ID and the claim code: ${selectedItem.id.slice(0, 6).toUpperCase()}\n3. Office hours: Monday-Friday, 8:00 AM - 5:00 PM\n4. Please claim within 30 days\n\nNote: The item will be held for 30 days from the approval date. After this period, it may be disposed of or donated.`;
+
+      // Update the request status
+      await updateDoc(doc(db, 'found_requests', selectedItem.id), {
+        status: 'approved',
+        updatedAt: serverTimestamp(),
+        statusReason: systemInstructions
+      });
+
+      // Create notification for the user
+      await addDoc(collection(db, 'notifications'), {
+        userId: selectedItem.userId,
+        type: 'found_request_approved',
+        title: 'Found Request Approved',
+        message: systemInstructions,
+        itemId: selectedItem.id,
+        itemName: selectedItem.itemName,
+        status: 'unread',
+        createdAt: serverTimestamp()
+      });
+
+      // Create activity for admin dashboard
+      await addDoc(collection(db, 'activities'), {
+        type: 'found_request_approved',
+        description: `Found request for ${selectedItem.itemName} by ${selectedItem.userName} was approved`,
+        itemId: selectedItem.id,
+        itemName: selectedItem.itemName,
+        userId: selectedItem.userId,
+        userName: selectedItem.userName,
+        statusReason: systemInstructions,
+        status: 'unread',
+        title: 'Request Approved',
+        message: `Found request for ${selectedItem.itemName} was approved with standard claiming instructions.`,
+        createdAt: serverTimestamp()
+      });
+
+      Alert.alert('Success', `Found request for ${selectedItem.itemName} has been approved!`);
+      setModalVisible(false);
+      setApprovalReason('');
+    } catch (error) {
+      console.error('Error approving found request:', error);
+      Alert.alert('Error', 'Failed to approve the request. Please try again.');
+    }
   };
 
-  const handleReject = () => {
-    // Implement reject functionality here
-    console.log('Item rejected:', selectedItem?.itemID);
-    // You could update a status field, send to an API, etc.
-    alert(`Item ${selectedItem?.itemName} has been rejected!`);
-    setModalVisible(false);
+  const handleReject = async () => {
+    try {
+      // Suggested rejection reasons
+      const rejectionReasons = [
+        "The item description doesn't match our records",
+        "Insufficient proof of finding the item",
+        "The location information is unclear or inconsistent",
+        "The item has already been claimed by its owner",
+        "The item reported is not in our inventory",
+        "The report appears to be a duplicate",
+        "The information provided is incomplete"
+      ];
+
+      // Show rejection reason picker
+      Alert.alert(
+        'Select Rejection Reason',
+        'Choose a reason for rejecting the request:',
+        rejectionReasons.map(reason => ({
+          text: reason,
+          onPress: async () => {
+            const rejectionMessage = `Your found item request has been rejected.\n\nReason for rejection:\n${reason}\n\nIf you believe this is a mistake or have additional information to provide, please submit a new request with complete details.`;
+
+            // Update the request status
+            await updateDoc(doc(db, 'found_requests', selectedItem.id), {
+              status: 'rejected',
+              updatedAt: serverTimestamp(),
+              statusReason: rejectionMessage
+            });
+
+            // Create notification for the user
+            await addDoc(collection(db, 'notifications'), {
+              userId: selectedItem.userId,
+              type: 'found_request_rejected',
+              title: 'Found Request Rejected',
+              message: rejectionMessage,
+              itemId: selectedItem.id,
+              itemName: selectedItem.itemName,
+              status: 'unread',
+              createdAt: serverTimestamp()
+            });
+
+            // Create activity for admin dashboard
+            await addDoc(collection(db, 'activities'), {
+              type: 'found_request_rejected',
+              description: `Found request for ${selectedItem.itemName} by ${selectedItem.userName} was rejected`,
+              itemId: selectedItem.id,
+              itemName: selectedItem.itemName,
+              userId: selectedItem.userId,
+              userName: selectedItem.userName,
+              statusReason: rejectionMessage,
+              status: 'unread',
+              title: 'Request Rejected',
+              message: `Found request for ${selectedItem.itemName} was rejected with reason: ${reason}`,
+              createdAt: serverTimestamp()
+            });
+
+            Alert.alert('Success', `Found request for ${selectedItem.itemName} has been rejected!`);
+            setModalVisible(false);
+            setRejectReason('');
+          }
+        })),
+        { cancelable: true }
+      );
+    } catch (error) {
+      console.error('Error rejecting found request:', error);
+      Alert.alert('Error', 'Failed to reject the request. Please try again.');
+    }
   };
+
+  const renderCard = (item) => (
+    <TouchableOpacity
+      key={item.id}
+      style={styles.horizontalCard}
+      onPress={() => handleViewItem(item)}
+    >
+      <View style={styles.imageContainer}>
+        <Image 
+          source={{ uri: item.image }} 
+          style={styles.cardImage} 
+          resizeMode="cover" 
+        />
+      </View>
+      <View style={styles.cardDetails}>
+        <Text style={styles.itemName} numberOfLines={1}>{item.itemName}</Text>
+        <Text style={[styles.itemDetail, styles.statusText]}>
+          Status: <Text style={item.status === 'pending' ? styles.pendingStatus : item.status === 'approved' ? styles.approvedStatus : styles.rejectedStatus}>
+            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+          </Text>
+        </Text>
+        <Text style={styles.viewMore}>Tap to view more details →</Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  const renderModal = () => (
+    <Modal
+      visible={modalVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setModalVisible(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalCard}>
+          <Image 
+            source={{ uri: selectedItem?.image }} 
+            style={styles.modalImage} 
+            resizeMode="contain" 
+          />
+
+          <TouchableOpacity style={styles.modalCloseIcon} onPress={() => setModalVisible(false)}>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>X</Text>
+          </TouchableOpacity>
+
+          <View style={styles.modalDetails}>
+            <Text style={styles.modalItemName}>Item: {selectedItem?.itemName}</Text>
+            <Text style={styles.modalDetailsText}>Date Found: {selectedItem?.dateFound}</Text>
+            <Text style={styles.modalDetailsText}>Time Found: {selectedItem?.timeFound}</Text>
+            <Text style={styles.modalDetailsText}>Location: {selectedItem?.location}</Text>
+            <Text style={styles.modalDetailsText}>Found By: {selectedItem?.userName}</Text>
+            <Text style={styles.modalDetailsText}>Contact: {selectedItem?.contact}</Text>
+            <Text style={styles.modalDescription}>Description:</Text>
+            <Text style={styles.modalDescriptionText}>{selectedItem?.description}</Text>
+          </View>
+
+          <View style={styles.actionButtons}>
+            <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
+              <Text style={{ color: 'white', fontWeight: 'bold' }}>APPROVE</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.rejectButton} onPress={handleReject}>
+              <Text style={{ color: 'white', fontWeight: 'bold' }}>REJECT</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <View style={styles.container}>
@@ -100,75 +272,38 @@ const FoundRequests = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
+      {/* Status Tabs */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'pending' && styles.activeTab]}
+          onPress={() => setActiveTab('pending')}
+        >
+          <Text style={[styles.tabText, activeTab === 'pending' && styles.activeTabText]}>Pending</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'approved' && styles.activeTab]}
+          onPress={() => setActiveTab('approved')}
+        >
+          <Text style={[styles.tabText, activeTab === 'approved' && styles.activeTabText]}>Approved</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'rejected' && styles.activeTab]}
+          onPress={() => setActiveTab('rejected')}
+        >
+          <Text style={[styles.tabText, activeTab === 'rejected' && styles.activeTabText]}>Rejected</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Scrollable Cards */}
       <ScrollView style={styles.scrollView}>
-        <View style={styles.cardContainer}>
-          {filteredData.map((item) => (
-            <LinearGradient
-              key={item.itemID}
-              colors={['#00B4DB', '#0083B0']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.card}
-            >
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>{item.itemName}</Text>
-              </View>
-              <View style={styles.cardDivider} />
-              <Text style={[styles.cardText, { marginTop: 10 }]}>Reported: {item.reportedDate}</Text>
-              <Text style={styles.cardText}>Location: {item.location}</Text>
-              <Text style={styles.cardText}>Found by: {item.foundBy}</Text>
-              <TouchableOpacity
-                style={styles.cardButton}
-                onPress={() => handleViewItem(item)}
-              >
-                <Text style={styles.cardButtonText}>View Details</Text>
-              </TouchableOpacity>
-            </LinearGradient>
-          ))}
-        </View>
+        {filteredItems.length === 0 ? (
+          <Text style={styles.noItemsText}>No {activeTab} found requests</Text>
+        ) : (
+          filteredItems.map((item) => renderCard(item))
+        )}
       </ScrollView>
 
-      {/* Modal for Item Details */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            {/* Image at the top */}
-            <Image source={Phone} style={styles.modalImage} resizeMode="contain" />
-
-            {/* Close Button */}
-            <TouchableOpacity style={styles.modalCloseIcon} onPress={() => setModalVisible(false)}>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>X</Text>
-            </TouchableOpacity>
-
-            {/* Details */}
-            <View style={styles.modalDetails}>
-              <Text style={styles.modalItemName}>Item: {selectedItem?.itemName}</Text>
-              <Text style={styles.modalDetailsText}>Date Found: {selectedItem?.reportedDate}</Text>
-              <Text style={styles.modalDetailsText}>Time Found: {selectedItem?.timeFound}</Text>
-              <Text style={styles.modalDetailsText}>Location: {selectedItem?.location}</Text>
-              <Text style={styles.modalDetailsText}>Found By: {selectedItem?.foundBy}</Text>
-              <Text style={styles.modalDescription}>Description:</Text>
-              <Text style={styles.modalDescriptionText}>{selectedItem?.description}</Text>
-            </View>
-
-            {/* Action Buttons */}
-            <View style={styles.actionButtons}>
-              <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
-                <Text style={{ color: 'white', fontWeight: 'bold' }}>APPROVE</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.rejectButton} onPress={handleReject}>
-                <Text style={{ color: 'white', fontWeight: 'bold' }}>REJECT</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {renderModal()}
     </View>
   );
 };
@@ -225,60 +360,52 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
-    width: '100%',
-  },
-  cardContainer: {
-    flex: 1,
-    alignItems: 'center', // Center the cards horizontally
-    justifyContent: 'flex-start',
     paddingHorizontal: 10,
   },
-  card: {
-    borderRadius: 10,
-    padding: 15,
+  horizontalCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 15,
     marginVertical: 8,
-    alignSelf: 'center',
-    width: '85%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 3,
+    overflow: 'hidden',
+    height: 100,
   },
-  cardHeader: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
+  imageContainer: {
+    width: 100,
+    height: '100%',
+    backgroundColor: '#f0f0f0',
+    padding: 8,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-  },
-  cardDivider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 3,
-  },
-  cardText: {
-    fontSize: 16,
-    color: '#fff',
-    marginBottom: 8,
-    textAlign : 'center',
-  },
-  cardButton: {
-    marginTop: 15,
-    backgroundColor: '#007BFF',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
+  cardImage: {
+    width: '100%',
+    height: '100%',
     borderRadius: 8,
-    alignSelf: 'center',
   },
-  cardButtonText: {
-    color: '#fff',
+  cardDetails: {
+    flex: 1,
+    padding: 15,
+    justifyContent: 'center',
+  },
+  itemName: {
+    fontSize: 18,
     fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 5,
+  },
+  itemDetail: {
     fontSize: 14,
+    color: '#666',
+    marginBottom: 3,
+  },
+  viewMore: {
+    fontSize: 13,
+    color: '#007BFF',
+    marginTop: 5,
   },
   modalOverlay: {
     flex: 1,
@@ -315,17 +442,18 @@ const styles = StyleSheet.create({
   },
   modalDetails: {
     width: '100%',
-    paddingHorizontal: 10,
-    marginBottom: 20, // Add spacing below the details
+    paddingHorizontal: 15,
+    marginBottom: 20,
   },
   modalItemName: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 5,
+    marginBottom: 10,
   },
   modalDetailsText: {
-    fontSize: 14,
-    marginBottom: 3,
+    fontSize: 16,
+    marginBottom: 5,
+    color: '#333',
   },
   modalDescription: {
     fontSize: 16,
@@ -334,8 +462,9 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   modalDescriptionText: {
-    fontSize: 14,
-    marginBottom: 10,
+    fontSize: 16,
+    color: '#666',
+    lineHeight: 22,
   },
   actionButtons: {
     flexDirection: 'row',
@@ -358,6 +487,65 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 5,
     alignItems: 'center',
+  },
+  tabContainer: {
+    marginTop: 10,
+    flexDirection: 'row',
+    marginBottom: 15,
+    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    marginHorizontal: 5,
+    borderRadius: 5,
+    backgroundColor: '#f0f0f0',
+    alignItems: 'center',
+  },
+  activeTab: {
+    backgroundColor: '#007BFF',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#666',
+  },
+  activeTabText: {
+    color: '#fff',
+  },
+  noItemsText: {
+    textAlign: 'center',
+    fontSize: 16,
+    color: '#666',
+    marginTop: 20,
+  },
+  statusText: {
+    fontWeight: 'bold',
+  },
+  pendingStatus: {
+    color: '#FF3B30',
+    fontWeight: 'bold',
+  },
+  approvedStatus: {
+    color: '#008000',
+    fontWeight: 'bold',
+  },
+  rejectedStatus: {
+    color: '#FF3B30',
+    fontWeight: 'bold',
+  },
+  reasonContainer: {
+    width: '100%',
+    marginVertical: 10,
+  },
+  reasonInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 5,
+    padding: 10,
+    minHeight: 80,
+    textAlignVertical: 'top',
   },
 });
 

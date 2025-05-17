@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,35 +8,77 @@ import {
   ScrollView,
   Image,
   Modal,
+  Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Header from '../components/AdminHeader';
+import AdminHeader from '../components/AdminHeader';
 import SidebarMenu from '../components/sidebarmenu';
 import * as Print from 'expo-print';
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc, where, getDocs } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
+import { Ionicons } from '@expo/vector-icons';
 
 import searchIcon from '../assets/search-icon.png';
-import Phone from '../assets/Phone.png'; // Correct image import
+import Phone from '../assets/Phone.png';
 
 const AdminManageLost = ({ navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [lostItems, setLostItems] = useState([]);
+  const [filteredItems, setFilteredItems] = useState([]);
 
-  const lostItems = [
-    { itemID: 1, itemName: 'Phone', reportedDate: '2024-12-11', reportedTime: '16:30', location: 'EB Room 208', lostBy: 'Cameron Servantes' },
-    { itemID: 2, itemName: 'Flashdrive', reportedDate: '2024-12-10', reportedTime: '14:00', location: 'Student Center', lostBy: 'Naya Young' },
-    { itemID: 3, itemName: 'Book', reportedDate: '2024-12-09', reportedTime: '10:15', location: 'EB Room 207', lostBy: 'Kimberlyn Pareja' },
-  ];
+  useEffect(() => {
+    // Create a query to get lost items, ordered by creation time
+    const q = query(
+      collection(db, 'lost_items'),
+      orderBy('createdAt', 'desc')
+    );
 
-  const filteredItems = lostItems.filter((item) =>
-    item.itemName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+    // Set up real-time listener
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const items = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        items.push({
+          id: doc.id,
+          ...data,
+          dateLost: data.dateLost?.toDate?.()?.toLocaleDateString() || 'N/A',
+          timeLost: data.timeLost?.toDate?.()?.toLocaleTimeString() || 'N/A',
+        });
+      });
+      setLostItems(items);
+      setFilteredItems(items);
+    });
 
-  const handleViewItem = (itemID) => {
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, []);
+
+  const handleSearch = (query) => {
+    setSearchQuery(query);
+    if (query.trim() === '') {
+      setFilteredItems(lostItems);
+    } else {
+      const filtered = lostItems.filter((item) =>
+        item.name?.toLowerCase().includes(query.toLowerCase()) ||
+        item.description?.toLowerCase().includes(query.toLowerCase()) ||
+        item.landMark?.toLowerCase().includes(query.toLowerCase()) ||
+        item.reporter?.name?.toLowerCase().includes(query.toLowerCase())
+      );
+      setFilteredItems(filtered);
+    }
+  };
+
+  const handleViewItem = (item) => {
+    setSelectedItem(item);
     setModalVisible(true);
   };
 
   const handlePrint = async () => {
+    if (!selectedItem) return;
+
     const htmlContent = `
       <html>
         <head>
@@ -70,14 +112,15 @@ const AdminManageLost = ({ navigation }) => {
         <body>
           <h1>Lost Item Details</h1>
           <div class="details">
-            <p><strong>Item Name:</strong> Phone</p>
-            <p><strong>Reported Date:</strong> 2024-12-11</p>
-            <p><strong>Time Found:</strong> 4:30 pm</p>
-            <p><strong>Location:</strong> EB Room 208</p>
-            <p><strong>Lost by:</strong> Cameron Servantes</p>
+            <p><strong>Item Name:</strong> ${selectedItem.name}</p>
+            <p><strong>Reported Date:</strong> ${selectedItem.dateLost}</p>
+            <p><strong>Time Lost:</strong> ${selectedItem.timeLost}</p>
+            <p><strong>Location:</strong> ${selectedItem.landMark}</p>
+            <p><strong>Lost by:</strong> ${selectedItem.reporter?.name || 'Unknown'}</p>
+            <p><strong>Contact:</strong> ${selectedItem.contact || 'N/A'}</p>
           </div>
           <p class="description">
-            I accidentally lost this phone. It’s a vivo E27, color gray. Bag-o pa gajud to tag palit. Basin maka kita mo. Tagaan nako reward.
+            ${selectedItem.description}
           </p>
         </body>
       </html>
@@ -90,9 +133,56 @@ const AdminManageLost = ({ navigation }) => {
     }
   };
 
+  const handleDeleteItem = async (item) => {
+    Alert.alert(
+      "Delete Item",
+      "Are you sure you want to delete this item? This action cannot be undone.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // First, delete the lost item document
+              await deleteDoc(doc(db, 'lost_items', item.id));
+
+              // Then, find and delete all related notifications
+              const notificationsQuery = query(
+                collection(db, 'notifications'),
+                where('itemId', '==', item.id)
+              );
+              const notificationsSnapshot = await getDocs(notificationsQuery);
+              const deletePromises = notificationsSnapshot.docs.map(doc => 
+                deleteDoc(doc.ref)
+              );
+              await Promise.all(deletePromises);
+
+              Alert.alert('Success', 'Item has been deleted successfully');
+              if (modalVisible) {
+                handleCloseModal();
+              }
+            } catch (error) {
+              console.error('Error deleting item:', error);
+              Alert.alert('Error', 'Failed to delete the item. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleCloseModal = () => {
+    setModalVisible(false);
+    setSelectedItem(null);
+  };
+
   return (
     <View style={styles.container}>
-      <Header
+      <AdminHeader
         navigation={navigation}
         toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)}
       />
@@ -113,73 +203,115 @@ const AdminManageLost = ({ navigation }) => {
           style={styles.searchInput}
           placeholder="Search for a keyword"
           value={searchQuery}
-          onChangeText={setSearchQuery}
+          onChangeText={handleSearch}
         />
         <TouchableOpacity style={styles.searchButton}>
           <Image source={searchIcon} style={styles.searchIcon} />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.tableContainer}>
-        <ScrollView style={styles.scrollView}>
-          {filteredItems.map((item) => (
-            <LinearGradient
-              key={item.itemID}
-              colors={['#ed213a', '#93291e']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.card}
-            >
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>{item.itemName}</Text>
-              </View>
-              <View style={styles.cardDivider} />
-              <Text style={styles.cardText}>Reported: {item.reportedDate}</Text>
-              <Text style={styles.cardText}>Time: {item.reportedTime}</Text>
-              <Text style={styles.cardText}>Location: {item.location}</Text>
-              <Text style={styles.cardText}>Lost by: {item.lostBy}</Text>
-              <TouchableOpacity style={styles.cardButton} onPress={() => handleViewItem(item.itemID)}>
-                <Text style={styles.cardButtonText}>View Details</Text>
-              </TouchableOpacity>
-            </LinearGradient>
-          ))}
-        </ScrollView>
-      </View>
+      <ScrollView style={styles.scrollView}>
+        {filteredItems.map((item) => (
+          <TouchableOpacity
+            key={item.id}
+            style={styles.horizontalCard}
+            onPress={() => handleViewItem(item)}
+          >
+            <View style={styles.imageContainer}>
+              {item.images && item.images.length > 0 ? (
+                <Image
+                  source={{ uri: item.images[0].url }}
+                  style={styles.cardImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.noImageBox}>
+                  <Text style={styles.noImageText}>No Image</Text>
+                </View>
+              )}
+            </View>
+            <View style={styles.cardDetails}>
+              <Text style={styles.itemName}>{item.name}</Text>
+              <Text style={styles.itemDetail}>Lost: {item.dateLost}</Text>
+              <Text style={styles.itemDetail}>Location: {item.landMark}</Text>
+              <Text style={styles.itemDetail}>Reporter: {item.reporter?.name || 'Unknown'}</Text>
+              <Text style={styles.viewMore}>Tap to view more details →</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
-      {/* Modal */}
-      <Modal visible={modalVisible} animationType="fade" transparent={true}>
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={handleCloseModal}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <TouchableOpacity style={styles.closeButton} onPress={() => setModalVisible(false)}>
+            {selectedItem?.images && selectedItem.images.length > 0 ? (
+              <Image
+                source={{ uri: selectedItem.images[0].url }}
+                style={styles.modalImage}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={styles.noImageContainer}>
+                <Text style={styles.noImageText}>No image available</Text>
+              </View>
+            )}
+
+            {/* Close Button */}
+            <TouchableOpacity style={styles.modalCloseIcon} onPress={handleCloseModal}>
               <Text style={styles.closeButtonText}>X</Text>
             </TouchableOpacity>
 
-            <Image source={Phone} style={styles.modalImage} />
-            <Text style={styles.modalText}>
-              <Text style={styles.bold}>Item Name:</Text> Phone
-            </Text>
-            <Text style={styles.modalText}>
-              <Text style={styles.bold}>Reported Date:</Text> 2024-12-11
-            </Text>
-            <Text style={styles.modalText}>
-              <Text style={styles.bold}>Time Found:</Text> 4:30 pm
-            </Text>
-            <Text style={styles.modalText}>
-              <Text style={styles.bold}>Location:</Text> EB Room 208
-            </Text>
-            <Text style={styles.modalText}>
-              <Text style={styles.bold}>Lost by:</Text> Cameron Servantes
-            </Text>
-            <Text style={styles.modalText}>
-              <Text style={styles.bold}>Description:</Text>
-            </Text>
-            <Text style={styles.description}>
-              I accidentally lost this phone. It’s a vivo E27, color gray. Bag-o pa gajud to tag palit. Basin maka kita mo. Tagaan nako reward.
-            </Text>
+            {/* Details */}
+            <View style={styles.modalDetails}>
+              <Text style={styles.modalText}>
+                <Text style={{ fontWeight: 'bold' }}>Item Name:</Text> {selectedItem?.name}
+              </Text>
+              <Text style={styles.modalText}>
+                <Text style={{ fontWeight: 'bold' }}>Lost Date:</Text> {selectedItem?.dateLost}
+              </Text>
+              <Text style={styles.modalText}>
+                <Text style={{ fontWeight: 'bold' }}>Time Lost:</Text> {selectedItem?.timeLost}
+              </Text>
+              <Text style={styles.modalText}>
+                <Text style={{ fontWeight: 'bold' }}>Location:</Text>{' '}
+                <Text style={{ fontStyle: 'italic' }}>{selectedItem?.landMark}</Text>
+              </Text>
+              <Text style={styles.modalText}>
+                <Text style={{ fontWeight: 'bold' }}>Lost by:</Text> {selectedItem?.reporter?.name || 'Unknown'}
+              </Text>
+              <Text style={styles.modalText}>
+                <Text style={{ fontWeight: 'bold' }}>Contact:</Text> {selectedItem?.contact || 'N/A'}
+              </Text>
 
-            <TouchableOpacity style={styles.printButton} onPress={handlePrint}>
-              <Text style={styles.printButtonText}>Print</Text>
-            </TouchableOpacity>
+              {/* Description */}
+              <Text style={[styles.modalText, { marginTop: 10 }]}>
+                <Text style={{ fontWeight: 'bold' }}>Description:</Text>
+              </Text>
+              <Text style={styles.description}>
+                {selectedItem?.description || 'No description available'}
+              </Text>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={styles.printButton}
+                onPress={handlePrint}
+              >
+                <Text style={styles.printButtonText}>Print</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => handleDeleteItem(selectedItem)}
+              >
+                <Text style={styles.deleteButtonText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -209,124 +341,161 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, padding: 0, fontSize: 16 },
   searchButton: { padding: 10 },
   searchIcon: { width: 30, height: 30 },
-  tableContainer: {
-    backgroundColor: '#D9D9D9',
-    borderRadius: 5,
-    overflow: 'hidden',
-    marginTop: 15,
-    marginHorizontal: 10,
-    flex: 1,
+  scrollView: { 
+    flex: 1 
   },
-  scrollView: { flex: 1 },
-  card: {
+  horizontalCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
     borderRadius: 10,
-    padding: 15,
     marginVertical: 8,
-    marginHorizontal: 'auto',
-    width: '80%',
+    marginHorizontal: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 3,
     elevation: 3,
+    overflow: 'hidden',
+    height: 160,
   },
-  cardHeader: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
+  imageContainer: {
+    width: 160,
+    height: '100%',
+    backgroundColor: '#f0f0f0',
+    padding: 8,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-  },
-  cardDivider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 3,
-  },
-  cardText: {
-    fontSize: 16,
-    color: '#fff',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  cardButton: {
-    marginTop: 15,
-    backgroundColor: '#007BFF',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
+  cardImage: {
+    width: '100%',
+    height: '100%',
     borderRadius: 8,
-    alignSelf: 'center',
   },
-  cardButtonText: {
-    color: '#fff',
+  noImageBox: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+  },
+  noImageText: {
+    color: '#666',
+    fontSize: 16,
+  },
+  cardDetails: {
+    flex: 1,
+    padding: 15,
+    justifyContent: 'space-between',
+  },
+  itemName: {
+    fontSize: 18,
     fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+  },
+  itemDetail: {
     fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  viewMore: {
+    fontSize: 14,
+    color: '#007BFF',
+    marginTop: 8,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalCard: {
-    backgroundColor: '#fff',
     width: 320,
+    height: 570,
+    backgroundColor: 'white',
     borderRadius: 10,
-    padding: 15,
     alignItems: 'center',
+    padding: 20,
     position: 'relative',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: '#fff',
-    zIndex: 1,
-  },
-  closeButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
   },
   modalImage: {
     width: 280,
-    height: 160,
-    borderRadius: 8,
-    marginBottom: 15,
-    marginTop: 20,
+    height: 200,
+    resizeMode: 'contain',
+    marginBottom: 20,
+    borderRadius: 10,
+  },
+  noImageContainer: {
+    width: 280,
+    height: 200,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+    borderRadius: 10,
+  },
+  modalCloseIcon: {
+    position: 'absolute',
+    top: -10,
+    right: -5,
+    zIndex: 1,
+    backgroundColor: '#000',
+    borderRadius: 15,
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalText: {
+    textAlign: 'left',
+    width: '100%',
+    marginBottom: 10,
     fontSize: 14,
-    color: '#333',
-    marginBottom: 5,
-    width: '90%',
   },
-  bold: {
-    fontWeight: 'bold',
+  modalDetails: {
+    width: '100%',
+    paddingHorizontal: 10,
+    marginBottom: 20,
   },
   description: {
     fontSize: 14,
-    marginTop: 2,
     color: '#333',
-    marginBottom: 10,
+    marginBottom: 20,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    marginTop: 5,
+    justifyContent: 'space-between',
     width: '90%',
   },
   printButton: {
-    marginTop: 10,
     backgroundColor: '#FEE440',
-    paddingVertical: 6,
-    paddingHorizontal: 20,
+    flex: 1,
+    marginRight: 5,
+    paddingVertical: 10,
     borderRadius: 5,
-    marginLeft: 160,
-    height: 30,
+    alignItems: 'center',
+  },
+  deleteButton: {
+    backgroundColor: '#FF3B30',
+    flex: 1,
+    marginLeft: 5,
+    paddingVertical: 10,
+    borderRadius: 5,
+    alignItems: 'center',
   },
   printButtonText: {
+    color: '#000',
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#000',
+  },
+  deleteButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 });
 

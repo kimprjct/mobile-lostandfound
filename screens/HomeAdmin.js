@@ -1,79 +1,196 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import AdminHeader from '../components/AdminHeader'; // Import the AdminHeader component
-import SidebarMenu from '../components/sidebarmenu'; // Import the SidebarMenu component
+import AdminHeader from '../components/AdminHeader';
+import SidebarMenu from '../components/sidebarmenu';
+import { db } from '../firebaseConfig';
+import { collection, query, orderBy, limit, getDocs, where, onSnapshot } from 'firebase/firestore';
 
 const Home = ({ navigation }) => {
+  const [activities, setActivities] = useState([]);
+  const [stats, setStats] = useState({
+    totalFound: 0,
+    totalLost: 0,
+    totalClaimed: 0,
+    totalUnclaimed: 0,
+    pendingVerifications: 0
+  });
+
+  useEffect(() => {
+    // Fetch activities
+    const activitiesQuery = query(
+      collection(db, 'activities'),
+      orderBy('createdAt', 'desc'),
+      limit(10)
+    );
+
+    const unsubscribeActivities = onSnapshot(activitiesQuery, (snapshot) => {
+      const activitiesList = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        activitiesList.push({
+          id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate?.()?.toLocaleString() || 'N/A'
+        });
+      });
+      setActivities(activitiesList);
+    });
+
+    // Fetch statistics
+    const fetchStats = async () => {
+      try {
+        // Get lost items count
+        const lostItemsQuery = query(collection(db, 'lost_items'));
+        const lostSnapshot = await getDocs(lostItemsQuery);
+        const totalLost = lostSnapshot.size;
+
+        // Get found items count
+        const foundItemsQuery = query(collection(db, 'found_items'));
+        const foundSnapshot = await getDocs(foundItemsQuery);
+        const totalFound = foundSnapshot.size;
+
+        // Get claimed items count
+        const claimedLostQuery = query(
+          collection(db, 'lost_items'),
+          where('status', '==', 'claimed')
+        );
+        const claimedFoundQuery = query(
+          collection(db, 'found_items'),
+          where('status', '==', 'claimed')
+        );
+        const [claimedLostSnapshot, claimedFoundSnapshot] = await Promise.all([
+          getDocs(claimedLostQuery),
+          getDocs(claimedFoundQuery)
+        ]);
+        const totalClaimed = claimedLostSnapshot.size + claimedFoundSnapshot.size;
+
+        // Get unclaimed items count
+        const unclaimedLostQuery = query(
+          collection(db, 'lost_items'),
+          where('status', '==', 'unclaimed')
+        );
+        const unclaimedFoundQuery = query(
+          collection(db, 'found_items'),
+          where('status', '==', 'unclaimed')
+        );
+        const [unclaimedLostSnapshot, unclaimedFoundSnapshot] = await Promise.all([
+          getDocs(unclaimedLostQuery),
+          getDocs(unclaimedFoundQuery)
+        ]);
+        const totalUnclaimed = unclaimedLostSnapshot.size + unclaimedFoundSnapshot.size;
+
+        // Get pending verifications count
+        const pendingLostQuery = query(
+          collection(db, 'lost_items'),
+          where('status', '==', 'pending')
+        );
+        const pendingFoundQuery = query(
+          collection(db, 'found_items'),
+          where('status', '==', 'pending')
+        );
+        const [pendingLostSnapshot, pendingFoundSnapshot] = await Promise.all([
+          getDocs(pendingLostQuery),
+          getDocs(pendingFoundQuery)
+        ]);
+        const totalPending = pendingLostSnapshot.size + pendingFoundSnapshot.size;
+
+        setStats({
+          totalLost,
+          totalFound,
+          totalClaimed,
+          totalUnclaimed,
+          pendingVerifications: totalPending
+        });
+      } catch (error) {
+        console.error('Error fetching statistics:', error);
+      }
+    };
+
+    fetchStats();
+    return () => unsubscribeActivities();
+  }, []);
+
+  const handleViewActivity = (activity) => {
+    // Navigate to appropriate screen based on activity type
+    if (activity.type === 'lost_item_reported') {
+      navigation.navigate('AdminManageLost');
+    } else if (activity.type === 'found_item_reported') {
+      navigation.navigate('AdminManageFound');
+    } else if (activity.type.includes('claim')) {
+      navigation.navigate('ClaimRequests');
+    }
+  };
+
+  const renderActivityItem = (activity) => {
+    const getActivityStyle = (type) => {
+      switch (type) {
+        case 'lost_item_reported':
+          return styles.lostActivity;
+        case 'found_item_reported':
+          return styles.foundActivity;
+        case 'item_claimed':
+          return styles.claimedActivity;
+        default:
+          return {};
+      }
+    };
+
+    return (
+      <View key={activity.id} style={[styles.activityItem, getActivityStyle(activity.type)]}>
+        <Text style={styles.activityText}>{activity.description}</Text>
+        <Text style={styles.activityTime}>{activity.createdAt}</Text>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
-      {/* Main Content */}
       <ScrollView>
-        {/* Custom Admin Header */}
-        <AdminHeader navigation={navigation} /> {/* Use AdminHeader instead of Header */}
+        <AdminHeader navigation={navigation} />
 
-        {/* Dashboard Section */}
         <View style={styles.dashboardHeader}>
-          {/* Sidebar Menu */}
-          <SidebarMenu navigation={navigation} /> {/* Ensure SidebarMenu uses <Text> correctly */}
-
-          {/* Dashboard Title */}
+          <SidebarMenu navigation={navigation} />
           <Text style={styles.dashboardTitle}>DASHBOARD</Text>
         </View>
 
-        {/* Dashboard Cards */}
         <View style={styles.dashboard}>
           <View style={[styles.card, styles.greenCard]}>
             <Text style={styles.cardTitle}>Total Number of Found Items</Text>
-            <Text style={styles.cardValue}>10</Text>
+            <Text style={styles.cardValue}>{stats.totalFound}</Text>
           </View>
           <View style={[styles.card, styles.redCard]}>
             <Text style={styles.cardTitle}>Total Number of Lost Items</Text>
-            <Text style={styles.cardValue}>15</Text>
+            <Text style={styles.cardValue}>{stats.totalLost}</Text>
           </View>
           <View style={[styles.card, styles.purpleCard]}>
             <Text style={styles.cardTitle}>Items Claimed</Text>
-            <Text style={styles.cardValue}>5</Text>
+            <Text style={styles.cardValue}>{stats.totalClaimed}</Text>
           </View>
           <View style={[styles.card, styles.blueCard]}>
             <Text style={styles.cardTitle}>Unclaimed Items</Text>
-            <Text style={styles.cardValue}>5</Text>
+            <Text style={styles.cardValue}>{stats.totalUnclaimed}</Text>
           </View>
           <View style={[styles.card, styles.yellowCard]}>
             <Text style={styles.cardTitle}>Pending Verifications</Text>
-            <Text style={styles.cardValue}>5</Text>
+            <Text style={styles.cardValue}>{stats.pendingVerifications}</Text>
           </View>
         </View>
 
-        {/* Recent Activities */}
         <View style={styles.table}>
           <Text style={styles.recentActivitiesTitle}>Recent Activities</Text>
-          {/* Table Header */}
           <View style={styles.tableHeader}>
             <Text style={styles.tableHeaderText}>Activity Description</Text>
             <Text style={styles.tableHeaderText}>Date/Time</Text>
             <Text style={styles.tableHeaderText}>Action</Text>
           </View>
 
-          {/* Table Rows */}
-          {[{
-            description: 'Folder reported found by Maria Theresa', 
-            date: '2025-03-03 10:05 AM'
-          }, {
-            description: 'Umbrella claimed by Soleil Riego', 
-            date: '2025-03-03 10:45 AM'
-          }, {
-            description: 'Wallet reported lost by Maria Bautista', 
-            date: '2025-03-03 11:00 AM'
-          }, {
-            description: 'Money reported lost by Kimberly Peraja', 
-            date: '2025-03-03 8:20 AM'
-          }].map((activity, index) => (
-            <View key={index} style={styles.tableRow}>
-              <Text style={styles.tableCell}>{activity.description}</Text> {/* Ensure this is inside <Text> */}
-              <Text style={styles.tableCell}>{activity.date}</Text> {/* Ensure this is inside <Text> */}
+          {activities.map((activity) => (
+            <View key={activity.id} style={styles.tableRow}>
+              <Text style={styles.tableCell}>{activity.description}</Text>
+              <Text style={styles.tableCell}>{activity.createdAt}</Text>
               <TouchableOpacity
                 style={styles.viewButton}
-                onPress={() => navigation.navigate('AdminManageLost')}
+                onPress={() => handleViewActivity(activity)}
               >
                 <Text style={styles.viewButtonText}>View</Text>
               </TouchableOpacity>
@@ -88,7 +205,7 @@ const Home = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#D9D9D9', // Updated background color
+    backgroundColor: '#D9D9D9',
   },
   dashboardHeader: {
     flexDirection: 'row',
@@ -102,46 +219,46 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     textAlign: 'center',
-    flex: 1, // Pushes the title to the center
-    marginLeft: 10, // Adjusted left margin for better spacing
+    flex: 1,
+    marginLeft: 10,
   },
   dashboard: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-evenly', // Adjust spacing between cards
+    justifyContent: 'space-evenly',
     marginTop: 30,
   },
   card: {
-    width: '43%', // Adjust card width to reduce the gap
-    height: 100, // Set a fixed height for all cards
+    width: '43%',
+    height: 100,
     padding: 10,
     borderRadius: 10,
     marginBottom: 10,
     alignItems: 'center',
-    justifyContent: 'center', // Center content vertically
-    marginLeft: 10, // Reduced left margin
-    marginRight: 10, // Reduced right margin
-    marginBottom: 20, // Add a little gap between each card
+    justifyContent: 'center',
+    marginLeft: 10,
+    marginRight: 10,
+    marginBottom: 20,
   },
   greenCard: {
     backgroundColor: '#359969',
-    marginBottom: 20, // Add bottom margin to the green card
+    marginBottom: 20,
   },
   redCard: {
     backgroundColor: '#AE0000',
-    marginBottom: 20, // Add bottom margin to the red card
+    marginBottom: 20,
   },
   purpleCard: {
     backgroundColor: '#C83AF7',
   },
   blueCard: {
     backgroundColor: '#3F3CAA',
-    marginBottom: 15, // Add bottom margin to the blue card
+    marginBottom: 15,
   },
   yellowCard: {
     backgroundColor: '#BEA035',
-    width: '41%', // Adjust yellow card width to match others
-    alignSelf: 'center', // Center the yellow card
+    width: '41%',
+    alignSelf: 'center',
   },
   cardTitle: {
     fontSize: 14,
@@ -210,6 +327,28 @@ const styles = StyleSheet.create({
     color: 'black',
     fontSize: 14,
     textAlign: 'center',
+  },
+  lostActivity: {
+    backgroundColor: '#AE0000',
+  },
+  foundActivity: {
+    backgroundColor: '#359969',
+  },
+  claimedActivity: {
+    backgroundColor: '#C83AF7',
+  },
+  activityItem: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ccc',
+  },
+  activityText: {
+    fontSize: 14,
+    color: 'black',
+  },
+  activityTime: {
+    fontSize: 12,
+    color: '#666',
   },
 });
 

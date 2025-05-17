@@ -1,224 +1,268 @@
 import React, { useState, useEffect } from 'react';
 import { 
-    View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, ScrollView, Platform 
+    View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, ScrollView, Platform, ActivityIndicator
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import CheckBox from 'expo-checkbox';
 import { useNavigation } from '@react-navigation/native';
 import Header from '../components/header';
 import Footer from '../components/footer';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loginWithEmailAndPassword } from '../utils/auth';
 
-const Login = ({ onLogin }) => {
+const Login = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [rememberMe, setRememberMe] = useState(false);
     const [error, setError] = useState('');
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
-    
+    const [isLoading, setIsLoading] = useState(false);
     const navigation = useNavigation();
 
-    useEffect(() => {
-        async function checkLoginStatus() {
-            const userToken = await AsyncStorage.getItem('userToken');
-            console.log('User Token:', userToken); // Debugging
-            setIsLoggedIn(!!userToken); // Set login state based on token
+    const handleLogin = async () => {
+        if (!email || !password) {
+            setError('Please fill in all fields');
+            return;
         }
 
-        checkLoginStatus();
-    }, []);
+        setError('');
+        setIsLoading(true);
 
-    const handleLogin = async () => {
-        if (email === 'admin@gmail.com' && password === '12345678') {
-            const adminProfile = { name: 'Admin', email }; // Example admin profile
-            await AsyncStorage.setItem('userProfile', JSON.stringify(adminProfile));
-            await AsyncStorage.setItem('userToken', 'adminToken'); // Save a token for admin
-            if (onLogin) {
-                await onLogin('adminToken'); // Call the onLogin function passed from App.js
+        try {
+            console.log('Attempting login with email:', email);
+            const result = await loginWithEmailAndPassword(email, password);
+            console.log('Login result:', result);
+            
+            if (result.success) {
+                console.log('Login successful. User is admin:', result.user.isAdmin);
+                // Use navigation.reset to clear the navigation stack and set the initial route
+                if (result.user.isAdmin) {
+                    console.log('Navigating to HomeAdmin');
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'HomeAdmin' }],
+                    });
+                } else {
+                    console.log('Navigating to Home');
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'Home' }],
+                    });
+                }
+            } else {
+                // Handle different error codes
+                switch (result.error) {
+                    case 'auth/invalid-email':
+                        setError('Invalid email address');
+                        break;
+                    case 'auth/user-disabled':
+                        setError('This account has been disabled');
+                        break;
+                    case 'auth/user-not-found':
+                        setError('No account found with this email');
+                        break;
+                    case 'auth/wrong-password':
+                        setError('Incorrect password');
+                        break;
+                    default:
+                        setError('Error logging in. Please try again.');
+                }
             }
-            setTimeout(() => {
-                navigation.navigate('HomeAdmin'); // Navigate to HomeAdmin after login
-            }, 0); // Ensure state updates before navigation
-        } else if (email === 'kpareja@ssct.edu.ph' && password === '12345678') {
-            const userProfile = { name: 'K. Pareja', email }; // Example profile
-            await AsyncStorage.setItem('userProfile', JSON.stringify(userProfile));
-            await AsyncStorage.setItem('userToken', 'dummyToken'); // Save a dummy token
-            if (onLogin) {
-                await onLogin('dummyToken'); // Call the onLogin function passed from App.js
-            }
-            setTimeout(() => {
-                navigation.navigate('Home'); // Navigate to Home after login
-            }, 0); // Ensure state updates before navigation
-        } else {
-            setError('Invalid email or password'); // Display error message
+        } catch (error) {
+            console.error('Login error:', error);
+            setError('An unexpected error occurred');
+        } finally {
+            setIsLoading(false);
         }
     };
 
     return (
-        <LinearGradient 
-            colors={['#FFE9E9', '#EDFFBB']} 
+        <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
             style={styles.container}
-            start={{ x: 0, y: 0 }} 
-            end={{ x: 1, y: 0 }} // Left to Right Gradient
         >
-            <View style={styles.headerContainer}>
-                <Header />
-            </View>
-
-            <KeyboardAvoidingView 
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={styles.keyboardView}
+            <LinearGradient
+                colors={['#FFE9E9', '#EDFFBB']}
+                style={styles.gradient}
             >
-                <ScrollView contentContainerStyle={styles.scrollView} keyboardShouldPersistTaps="handled">
-                    <View style={styles.titleContainer}>
-                        <Text style={styles.snsuText}>SNSU</Text>
-                        <Text style={styles.lostFoundText}>Lost and Found System</Text>
-                    </View>
-                    
-                    <View style={styles.loginBox}>
-                        <TextInput 
-                            style={styles.input} 
-                            placeholder="Email address" 
-                            placeholderTextColor="#4A4A4A" 
-                            keyboardType="email-address" 
-                            value={email} 
-                            onChangeText={setEmail}
-                        />
-
-                        <TextInput 
-                            style={styles.input} 
-                            placeholder="Password" 
-                            placeholderTextColor="#4A4A4A" 
-                            secureTextEntry 
-                            value={password} 
-                            onChangeText={setPassword}
-                        />
-
-                        <View style={styles.rememberContainer}>
-                            <CheckBox value={rememberMe} onValueChange={setRememberMe} />
-                            <Text style={styles.rememberText}>Remember me</Text>
+                <ScrollView contentContainerStyle={styles.scrollContainer}>
+                    <Header />
+                    <View style={styles.contentContainer}>
+                        <View style={styles.titleContainer}>
+                            <Text style={styles.titleMain}>SNSU</Text>
+                            <Text style={styles.titleSub}>Lost and Found System</Text>
                         </View>
+                        
+                        <View style={styles.formContainer}>
+                            <View style={styles.formBox}>
+                                {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                                
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Email address"
+                                    value={email}
+                                    onChangeText={setEmail}
+                                    keyboardType="email-address"
+                                    autoCapitalize="none"
+                                    editable={!isLoading}
+                                />
+                                
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Password"
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    secureTextEntry
+                                    editable={!isLoading}
+                                />
+                                
+                                <View style={styles.rememberMeContainer}>
+                                    <CheckBox
+                                        value={rememberMe}
+                                        onValueChange={setRememberMe}
+                                        style={styles.checkbox}
+                                        disabled={isLoading}
+                                    />
+                                    <Text style={styles.rememberMeText}>Remember me</Text>
+                                </View>
+                                
+                                <TouchableOpacity 
+                                    style={[styles.loginButton, isLoading && styles.disabledButton]}
+                                    onPress={handleLogin}
+                                    disabled={isLoading}
+                                >
+                                    {isLoading ? (
+                                        <ActivityIndicator color="#fff" />
+                                    ) : (
+                                        <Text style={styles.loginButtonText}>Log in</Text>
+                                    )}
+                                </TouchableOpacity>
 
-                        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-                        <TouchableOpacity onPress={handleLogin} style={styles.button}>
-                            <Text style={styles.buttonText}>Log in</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity>
-                            <Text style={styles.forgotPassword}>Forgot your password?</Text>
-                        </TouchableOpacity>
+                                <TouchableOpacity>
+                                    <Text style={styles.forgotPassword}>Forgot Password?</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
                     </View>
+                    <Footer />
                 </ScrollView>
-            </KeyboardAvoidingView>
-
-            <Footer />
-        </LinearGradient>
+            </LinearGradient>
+        </KeyboardAvoidingView>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
-    headerContainer: {
-        position: 'absolute',
-        top: 0,
-        width: '100%',
-        zIndex: 10,
-    },
-    keyboardView: {
+    gradient: {
         flex: 1,
-        width: '100%',
     },
-    scrollView: {
+    scrollContainer: {
         flexGrow: 1,
-        alignItems: 'center',
+    },
+    contentContainer: {
+        flex: 1,
         justifyContent: 'center',
-        paddingTop: 5, 
+        marginTop: -80,
     },
     titleContainer: {
-        marginTop: -100,
         alignItems: 'center',
-        marginBottom: 40,
+        marginBottom: 30,
     },
-    snsuText: {
-        fontSize: 50,
-        fontWeight: '800',
-        color: 'green',
-        fontFamily: 'Inter',
+    titleMain: {
+        fontSize: 42,
+        fontWeight: '900',
+        color: '#006400',
+        marginBottom: 10,
+        letterSpacing: 2,
+        textShadowColor: 'rgba(0, 100, 0, 0.15)',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 2,
     },
-    lostFoundText: {
-        fontSize: 35,
-        fontWeight: 'bold',
+    titleSub: {
+        fontSize: 34,
         color: 'black',
-        fontFamily: 'Inter',
+        textAlign: 'center',
+        marginBottom: 20,
+        fontWeight: '600',
+        letterSpacing: 1,
+        opacity: 0.9,
     },
-    loginBox: {
-        width: '80%',
-        backgroundColor: 'rgba(255, 255, 255, 0.32)',
-        padding: 40,
-        borderRadius: 24,
-        borderWidth: 1,
-        marginTop: 30, 
+    formContainer: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+    },
+    formBox: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 15,
+        padding: 30,
+        paddingVertical: 40,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 }, // Smaller shadow offset
-        shadowOpacity: 0.1, // Lighter shadow
-        shadowRadius: 3, // Smaller shadow radius
-        elevation: -2, // Subtle shadow for Android
+        shadowOffset: {
+            width: 0,
+            height: 3,
+        },
+        shadowOpacity: 0.25,
+        shadowRadius: 5,
+        elevation: 8,
     },
     input: {
-        width: '100%',
-        height: 50,
-        backgroundColor: '#F2FDFF',
-        borderWidth: 1,
-        borderColor: '#ccc',
-        borderRadius: 12,
-        paddingHorizontal: 15,
-        fontFamily: 'Inter',
+        backgroundColor: '#F5F5F5',
+        padding: 15,
+        paddingVertical: 18,
+        borderRadius: 8,
+        marginBottom: 20,
         fontSize: 16,
-        color: '#000',
-        marginBottom: 15,
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
     },
-    rememberContainer: {
+    rememberMeContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 15,
     },
-    rememberText: {
-        marginLeft: 8,
-        fontSize: 14,
+    checkbox: {
+        marginRight: 8,
+    },
+    rememberMeText: {
         color: '#666',
-        fontFamily: 'Inter',
     },
-    button: {
+    loginButton: {
         backgroundColor: '#4CAF50',
-        paddingVertical: 10,
-        borderRadius: 24,
+        padding: 15,
+        paddingVertical: 18,
+        borderRadius: 8,
         alignItems: 'center',
-        width: '50%',
-        alignSelf: 'center',
-        marginBottom: 10,
+        marginBottom: 15,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
     },
-    buttonText: {
-        color: '#fff',
-        fontSize: 20,
+    disabledButton: {
+        opacity: 0.7,
+    },
+    loginButtonText: {
+        color: '#FFFFFF',
         fontWeight: 'bold',
-        fontFamily: 'Inter',
-    },
-    forgotPassword: {
-        fontSize: 14,
-        color: '#007BFF',
-        textAlign: 'center',
-        fontFamily: 'Inter',
+        fontSize: 16,
     },
     errorText: {
-        color: 'red',
+        color: '#ff0000',
+        backgroundColor: 'rgba(255, 0, 0, 0.1)',
+        padding: 10,
+        borderRadius: 5,
+        marginBottom: 15,
         textAlign: 'center',
-        marginBottom: 10,
     },
+    forgotPassword: {
+        color: '#4CAF50',
+        textAlign: 'center',
+        textDecorationLine: 'underline',
+    }
 });
 
 export default Login;

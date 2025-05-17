@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,45 +7,135 @@ import {
   StyleSheet,
   SafeAreaView,
   ScrollView,
+  Alert,
+  ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { auth } from '../firebaseConfig';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { collection, addDoc, getDocs, query, where, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
+import { setUserAsAdmin } from '../utils/auth';
 
 import Header from '../components/AdminHeader';
 import SidebarMenu from '../components/sidebarmenu';
 
 const UserManagementScreen = ({ navigation }) => {
-  const [users, setUsers] = useState([
-    { id: '1', name: 'Kimberlyn Pareja', department: 'CEIT', email: 'kpareja@ssct.edu.ph', contact: '09518920355' },
-    { id: '2', name: 'Rena Rabe', department: 'CEIT', email: 'rrabe@ssct.edu.ph', contact: '0993492994' },
-    { id: '3', name: 'Kimberly Talictic', department: 'CEIT', email: 'ktalictic@sscr.edu.ph', contact: '09734929766' },
-    { id: '4', name: 'Cameron Servantes', department: 'COT', email: 'cservantes@ssct.edu.ph', contact: '0959342855' },
-  ]);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [users, setUsers] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
 
-  const [showForm, setShowForm] = useState(false);
-  const [newUser, setNewUser] = useState({
-    name: '',
-    department: '',
-    email: '',
-    contact: '',
-  });
+  useEffect(() => {
+    fetchUsers();
+  }, []);
 
-  const handleDelete = (id) => {
-    setUsers((prevUsers) => prevUsers.filter((user) => user.id !== id));
+  const fetchUsers = async () => {
+    try {
+      setIsLoadingUsers(true);
+      const usersCollection = collection(db, 'users');
+      const userSnapshot = await getDocs(usersCollection);
+      const usersList = userSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setUsers(usersList);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      Alert.alert('Error', 'Failed to fetch users');
+    } finally {
+      setIsLoadingUsers(false);
+    }
   };
 
-  const handleSave = () => {
-    const newId = (users.length + 1).toString();
-    const userToAdd = { id: newId, ...newUser };
-    setUsers((prevUsers) => [...prevUsers, userToAdd]);
-    setNewUser({ name: '', department: '', email: '', contact: '' });
-    setShowForm(false);
+  const handleCreateUser = async () => {
+    if (!email || !password || !name) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // Create auth user
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      // Add user details to Firestore
+      await addDoc(collection(db, 'users'), {
+        uid: user.uid,
+        email: email,
+        name: name,
+        createdAt: new Date(),
+        isAdmin: false
+      });
+
+      Alert.alert('Success', 'User account created successfully');
+      setEmail('');
+      setPassword('');
+      setName('');
+      fetchUsers(); // Refresh the users list
+    } catch (error) {
+      console.error('Error creating user:', error);
+      let errorMessage = 'Failed to create user account';
+      switch (error.code) {
+        case 'auth/email-already-in-use':
+          errorMessage = 'This email is already registered';
+          break;
+        case 'auth/invalid-email':
+          errorMessage = 'Invalid email address';
+          break;
+        case 'auth/weak-password':
+          errorMessage = 'Password should be at least 6 characters';
+          break;
+        default:
+          errorMessage = error.message;
+      }
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleCancel = () => {
-    setNewUser({ name: '', department: '', email: '', contact: '' });
-    setShowForm(false);
+  const makeUserAdmin = async (uid) => {
+    try {
+      setIsLoading(true);
+      const result = await setUserAsAdmin(uid);
+      if (result.success) {
+        Alert.alert('Success', 'User has been made an admin');
+        fetchUsers(); // Refresh the users list
+      } else {
+        Alert.alert('Error', result.error || 'Failed to make user an admin');
+      }
+    } catch (error) {
+      console.error('Error making user admin:', error);
+      Alert.alert('Error', 'Failed to make user an admin');
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  const renderUserItem = (user) => (
+    <View key={user.id} style={styles.userItem}>
+      <View style={styles.userInfo}>
+        <Text style={styles.userName}>{user.name}</Text>
+        <Text style={styles.userEmail}>{user.email}</Text>
+        <Text style={styles.userRole}>{user.isAdmin ? 'Admin' : 'User'}</Text>
+      </View>
+      <View style={styles.userActions}>
+        {!user.isAdmin && (
+          <TouchableOpacity 
+            onPress={() => makeUserAdmin(user.uid)}
+            style={styles.adminButton}
+          >
+            <Text style={styles.buttonText}>Make Admin</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
@@ -75,29 +165,7 @@ const UserManagementScreen = ({ navigation }) => {
           {/* Card View */}
           <ScrollView style={styles.scrollView}>
             <View style={styles.cardContainer}>
-              {users.map((user) => (
-                <LinearGradient
-                  key={user.id}
-                  colors={['#834d9b', '#d04ed6']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.card}
-                >
-                  <View style={styles.cardHeader}>
-                    <Text style={styles.cardTitle}>{user.name}</Text>
-                  </View>
-                  <View style={styles.cardDivider} />
-                  <Text style={styles.cardText}>Department: {user.department}</Text>
-                  <Text style={styles.cardText}>Email: {user.email}</Text>
-                  <Text style={styles.cardText}>Contact: {user.contact}</Text>
-                  <TouchableOpacity
-                    style={styles.cardButton}
-                    onPress={() => handleDelete(user.id)}
-                  >
-                    <Text style={styles.cardButtonText}>Delete</Text>
-                  </TouchableOpacity>
-                </LinearGradient>
-              ))}
+              {users.map(renderUserItem)}
             </View>
           </ScrollView>
         </View>
@@ -111,35 +179,35 @@ const UserManagementScreen = ({ navigation }) => {
 
             <TextInput
               placeholder="Full Name"
-              value={newUser.name}
-              onChangeText={(text) => setNewUser({ ...newUser, name: text })}
+              value={name}
+              onChangeText={setName}
               style={styles.input}
-            />
-            <TextInput
-              placeholder="Department"
-              value={newUser.department}
-              onChangeText={(text) => setNewUser({ ...newUser, department: text })}
-              style={styles.input}
+              editable={!isLoading}
             />
             <TextInput
               placeholder="Email"
-              value={newUser.email}
-              onChangeText={(text) => setNewUser({ ...newUser, email: text })}
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
               style={styles.input}
+              editable={!isLoading}
             />
             <TextInput
-              placeholder="Contact Number"
-              value={newUser.contact}
-              onChangeText={(text) => setNewUser({ ...newUser, contact: text })}
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
               style={styles.input}
+              editable={!isLoading}
             />
 
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
               <TouchableOpacity onPress={handleCancel} style={{ marginRight: 20 }}>
                 <Text style={{ color: 'red' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handleSave}>
-                <Text style={{ color: 'green' }}>Save</Text>
+              <TouchableOpacity onPress={handleCreateUser} style={{ marginRight: 20 }}>
+                <Text style={{ color: 'green' }}>Create User</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -162,7 +230,6 @@ const styles = StyleSheet.create({
     width: 55,
     paddingTop: 40,
     marginLeft: 10,
-
   },
   content: {
     flex: 1,
@@ -219,7 +286,6 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     marginLeft: '-10%',
-
   },
   cardContainer: {
     flex: 1,
@@ -297,6 +363,43 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     padding: 10,
     borderRadius: 5,
+  },
+  userItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  userInfo: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  userEmail: {
+    fontSize: 14,
+    color: '#666',
+  },
+  userRole: {
+    fontSize: 14,
+    color: '#4CAF50',
+    fontWeight: 'bold',
+  },
+  userActions: {
+    flexDirection: 'row',
+  },
+  adminButton: {
+    backgroundColor: '#4CAF50',
+    padding: 8,
+    borderRadius: 5,
+    marginLeft: 10,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 14,
   },
 });
 
