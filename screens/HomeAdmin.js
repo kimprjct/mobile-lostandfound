@@ -1,41 +1,78 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated } from 'react-native';
 import AdminHeader from '../components/AdminHeader';
 import SidebarMenu from '../components/sidebarmenu';
 import { db } from '../firebaseConfig';
-import { collection, query, orderBy, limit, getDocs, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, where, onSnapshot, addDoc, serverTimestamp, getCountFromServer } from 'firebase/firestore';
 
 const Home = ({ navigation }) => {
   const [activities, setActivities] = useState([]);
+  const [filteredActivities, setFilteredActivities] = useState([]);
   const [stats, setStats] = useState({
     totalFound: 0,
     totalLost: 0,
     totalClaimed: 0,
     totalUnclaimed: 0,
-    pendingVerifications: 0
+    pendingClaimVerifications: 0,  // Pending claim requests
+    pendingFoundVerifications: 0,  // Pending found item verifications
+    totalPendingVerifications: 0   // Total of both types
   });
 
+  // Add animation values
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+  const slideAnim = useRef(new Animated.Value(-50)).current;
+
   useEffect(() => {
-    // Fetch activities
     const activitiesQuery = query(
       collection(db, 'activities'),
       orderBy('createdAt', 'desc'),
-      limit(10)
+      limit(20)
     );
 
     const unsubscribeActivities = onSnapshot(activitiesQuery, (snapshot) => {
       const activitiesList = [];
       snapshot.forEach((doc) => {
         const data = doc.data();
-        activitiesList.push({
-          id: doc.id,
-          ...data,
-          createdAt: data.createdAt?.toDate?.()?.toLocaleString() || 'N/A'
-        });
+        // Add null checks for data and description
+        if (data && 
+            data.description && 
+            data.userName && 
+            !data.description.includes('null') && 
+            !data.description.includes('Unknown user')) {
+          activitiesList.push({
+            id: doc.id,
+            ...data,
+            createdAt: data.createdAt?.toDate?.()?.toLocaleString() || 'N/A'
+          });
+        }
       });
-      setActivities(activitiesList);
+
+      // Deduplicate activities based on referenceId and type
+      const uniqueActivities = activitiesList.reduce((acc, current) => {
+        const isDuplicate = acc.find(item => 
+          item.referenceId === current.referenceId && 
+          item.type === current.type
+        );
+
+        if (!isDuplicate) {
+          return acc.concat([current]);
+        }
+        return acc;
+      }, []);
+
+      // Sort by date (most recent first) and limit to 10 items
+      const sortedActivities = uniqueActivities
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 10);
+
+      setActivities(sortedActivities);
     });
 
+    return () => unsubscribeActivities();
+  }, []);
+
+  useEffect(() => {
     // Fetch statistics
     const fetchStats = async () => {
       try {
@@ -43,63 +80,37 @@ const Home = ({ navigation }) => {
         const lostItemsQuery = query(collection(db, 'lost_items'));
         const lostSnapshot = await getDocs(lostItemsQuery);
         const totalLost = lostSnapshot.size;
+        console.log('Total lost items:', totalLost);
 
         // Get found items count
         const foundItemsQuery = query(collection(db, 'found_items'));
         const foundSnapshot = await getDocs(foundItemsQuery);
         const totalFound = foundSnapshot.size;
+        console.log('Total found items:', totalFound);
 
-        // Get claimed items count
-        const claimedLostQuery = query(
-          collection(db, 'lost_items'),
-          where('status', '==', 'claimed')
-        );
-        const claimedFoundQuery = query(
-          collection(db, 'found_items'),
-          where('status', '==', 'claimed')
-        );
-        const [claimedLostSnapshot, claimedFoundSnapshot] = await Promise.all([
-          getDocs(claimedLostQuery),
-          getDocs(claimedFoundQuery)
-        ]);
-        const totalClaimed = claimedLostSnapshot.size + claimedFoundSnapshot.size;
+        // Claimed: status == 'retrieved'
+        const claimedClaimReq = await getCountFromServer(query(collection(db, 'claim_requests'), where('status', '==', 'retrieved')));
+        const claimedFoundReq = await getCountFromServer(query(collection(db, 'found_requests'), where('status', '==', 'retrieved')));
+        const totalClaimed = claimedClaimReq.data().count + claimedFoundReq.data().count;
 
-        // Get unclaimed items count
-        const unclaimedLostQuery = query(
-          collection(db, 'lost_items'),
-          where('status', '==', 'unclaimed')
-        );
-        const unclaimedFoundQuery = query(
-          collection(db, 'found_items'),
-          where('status', '==', 'unclaimed')
-        );
-        const [unclaimedLostSnapshot, unclaimedFoundSnapshot] = await Promise.all([
-          getDocs(unclaimedLostQuery),
-          getDocs(unclaimedFoundQuery)
-        ]);
-        const totalUnclaimed = unclaimedLostSnapshot.size + unclaimedFoundSnapshot.size;
+        // Unclaimed: status == 'approved'
+        const unclaimedClaimReq = await getCountFromServer(query(collection(db, 'claim_requests'), where('status', '==', 'approved')));
+        const unclaimedFoundReq = await getCountFromServer(query(collection(db, 'found_requests'), where('status', '==', 'approved')));
+        const totalUnclaimed = unclaimedClaimReq.data().count + unclaimedFoundReq.data().count;
 
-        // Get pending verifications count
-        const pendingLostQuery = query(
-          collection(db, 'lost_items'),
-          where('status', '==', 'pending')
-        );
-        const pendingFoundQuery = query(
-          collection(db, 'found_items'),
-          where('status', '==', 'pending')
-        );
-        const [pendingLostSnapshot, pendingFoundSnapshot] = await Promise.all([
-          getDocs(pendingLostQuery),
-          getDocs(pendingFoundQuery)
-        ]);
-        const totalPending = pendingLostSnapshot.size + pendingFoundSnapshot.size;
+        // Pending verifications: status == 'pending'
+        const pendingClaimReq = await getCountFromServer(query(collection(db, 'claim_requests'), where('status', '==', 'pending')));
+        const pendingFoundReq = await getCountFromServer(query(collection(db, 'found_requests'), where('status', '==', 'pending')));
+        const totalPendingVerifications = pendingClaimReq.data().count + pendingFoundReq.data().count;
 
         setStats({
-          totalLost,
           totalFound,
+          totalLost,
           totalClaimed,
           totalUnclaimed,
-          pendingVerifications: totalPending
+          pendingClaimVerifications: pendingClaimReq.data().count,
+          pendingFoundVerifications: pendingFoundReq.data().count,
+          totalPendingVerifications,
         });
       } catch (error) {
         console.error('Error fetching statistics:', error);
@@ -107,7 +118,27 @@ const Home = ({ navigation }) => {
     };
 
     fetchStats();
-    return () => unsubscribeActivities();
+
+    // Run animations when component mounts
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 1000,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      })
+    ]).start();
   }, []);
 
   const handleViewActivity = (activity) => {
@@ -143,9 +174,66 @@ const Home = ({ navigation }) => {
     );
   };
 
+  const renderCard = (title, value, color, index) => {
+    const delay = index * 100;
+    return (
+      <Animated.View 
+        style={[
+          styles.card,
+          { backgroundColor: color },
+          { 
+            opacity: fadeAnim,
+            transform: [
+              { scale: scaleAnim },
+              { translateY: slideAnim }
+            ]
+          }
+        ]}
+      >
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardValue}>{value}</Text>
+      </Animated.View>
+    );
+  };
+
+  // Replace the createActivity function with:
+  const createActivity = async (type, description, referenceId) => {
+    try {
+        if (!type || !description || !referenceId) {
+            console.error('Missing required parameters for activity creation');
+            return;
+        }
+
+        // Check for existing activity with same referenceId and type
+        const existingActivitiesQuery = query(
+            collection(db, 'activities'),
+            where('referenceId', '==', referenceId),
+            where('type', '==', type),
+            orderBy('createdAt', 'desc'),
+            limit(1)
+        );
+
+        const existingSnapshot = await getDocs(existingActivitiesQuery);
+        
+        // Only create new activity if one doesn't exist and description is valid
+        if (existingSnapshot.empty && 
+            !description.includes('null') && 
+            !description.includes('Unknown user')) {
+            await addDoc(collection(db, 'activities'), { 
+                type,
+                description,
+                referenceId,
+                createdAt: serverTimestamp(),
+            });
+        }
+    } catch (error) {
+        console.error('Error creating activity:', error);
+    }
+  };
+
   return (
     <View style={styles.container}>
-      <ScrollView>
+      <ScrollView showsVerticalScrollIndicator={false}>
         <AdminHeader navigation={navigation} />
 
         <View style={styles.dashboardHeader}>
@@ -153,28 +241,13 @@ const Home = ({ navigation }) => {
           <Text style={styles.dashboardTitle}>DASHBOARD</Text>
         </View>
 
-        <View style={styles.dashboard}>
-          <View style={[styles.card, styles.greenCard]}>
-            <Text style={styles.cardTitle}>Total Number of Found Items</Text>
-            <Text style={styles.cardValue}>{stats.totalFound}</Text>
-          </View>
-          <View style={[styles.card, styles.redCard]}>
-            <Text style={styles.cardTitle}>Total Number of Lost Items</Text>
-            <Text style={styles.cardValue}>{stats.totalLost}</Text>
-          </View>
-          <View style={[styles.card, styles.purpleCard]}>
-            <Text style={styles.cardTitle}>Items Claimed</Text>
-            <Text style={styles.cardValue}>{stats.totalClaimed}</Text>
-          </View>
-          <View style={[styles.card, styles.blueCard]}>
-            <Text style={styles.cardTitle}>Unclaimed Items</Text>
-            <Text style={styles.cardValue}>{stats.totalUnclaimed}</Text>
-          </View>
-          <View style={[styles.card, styles.yellowCard]}>
-            <Text style={styles.cardTitle}>Pending Verifications</Text>
-            <Text style={styles.cardValue}>{stats.pendingVerifications}</Text>
-          </View>
-        </View>
+        <Animated.View style={[styles.dashboard, { opacity: fadeAnim }]}>
+          {renderCard('Total Found Items', stats.totalFound, '#4CAF50', 0)}
+          {renderCard('Total Lost Items', stats.totalLost, '#F44336', 1)}
+          {renderCard('Items Claimed', stats.totalClaimed, '#9C27B0', 2)}
+          {renderCard('Unclaimed Items', stats.totalUnclaimed, '#2196F3', 3)}
+          {renderCard('Pending Verifications', stats.totalPendingVerifications, '#FFC107', 4)}
+        </Animated.View>
 
         <View style={styles.table}>
           <Text style={styles.recentActivitiesTitle}>Recent Activities</Text>
@@ -183,19 +256,28 @@ const Home = ({ navigation }) => {
             <Text style={styles.tableHeaderText}>Date/Time</Text>
             <Text style={styles.tableHeaderText}>Action</Text>
           </View>
-
-          {activities.map((activity) => (
-            <View key={activity.id} style={styles.tableRow}>
-              <Text style={styles.tableCell}>{activity.description}</Text>
-              <Text style={styles.tableCell}>{activity.createdAt}</Text>
-              <TouchableOpacity
-                style={styles.viewButton}
-                onPress={() => handleViewActivity(activity)}
-              >
-                <Text style={styles.viewButtonText}>View</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
+          <ScrollView style={{ maxHeight: 250 }}>
+            {activities.length === 0 ? (
+              <View style={styles.tableRow}>
+                <Text style={[styles.tableCell, styles.noActivitiesText]}>
+                  No recent activities
+                </Text>
+              </View>
+            ) : (
+              activities.map((activity) => (
+                <View key={activity.id} style={styles.tableRow}>
+                  <Text style={styles.tableCell}>{activity.description}</Text>
+                  <Text style={styles.tableCell}>{activity.createdAt}</Text>
+                  <TouchableOpacity
+                    style={styles.viewButton}
+                    onPress={() => handleViewActivity(activity)}
+                  >
+                    <Text style={styles.viewButtonText}>View</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </ScrollView>
         </View>
       </ScrollView>
     </View>
@@ -216,61 +298,62 @@ const styles = StyleSheet.create({
     marginRight: 70,
   },
   dashboardTitle: {
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
     textAlign: 'center',
     flex: 1,
     marginLeft: 10,
+    color: '#333',
+    textShadowColor: 'rgba(0, 0, 0, 0.1)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
   dashboard: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-evenly',
     marginTop: 30,
+    paddingHorizontal: 10,
   },
   card: {
-    width: '43%',
-    height: 100,
-    padding: 10,
-    borderRadius: 10,
-    marginBottom: 10,
+    width: '45%',
+    height: 120,
+    padding: 15,
+    borderRadius: 20,
+    marginBottom: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 10,
-    marginRight: 10,
-    marginBottom: 20,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
-  greenCard: {
-    backgroundColor: '#359969',
-    marginBottom: 20,
-  },
-  redCard: {
-    backgroundColor: '#AE0000',
-    marginBottom: 20,
-  },
-  purpleCard: {
-    backgroundColor: '#C83AF7',
-  },
-  blueCard: {
-    backgroundColor: '#3F3CAA',
-    marginBottom: 15,
-  },
-  yellowCard: {
-    backgroundColor: '#BEA035',
-    width: '41%',
-    alignSelf: 'center',
-  },
+  greenCard: { backgroundColor: '#4CAF50' },
+  redCard: { backgroundColor: '#F44336' },
+  purpleCard: { backgroundColor: '#9C27B0' },
+  blueCard: { backgroundColor: '#2196F3' },
+  yellowCard: { backgroundColor: '#FFC107' },
   cardTitle: {
-    fontSize: 14,
+    fontSize: 16,
     color: 'white',
     textAlign: 'center',
     fontWeight: 'bold',
+    marginBottom: 10,
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
   },
   cardValue: {
-    fontSize: 25,
+    fontSize: 28,
     fontWeight: 'bold',
     color: 'white',
-    marginTop: 5,
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
   },
   recentActivitiesTitle: {
     fontSize: 18,
@@ -349,6 +432,11 @@ const styles = StyleSheet.create({
   activityTime: {
     fontSize: 12,
     color: '#666',
+  },
+  noActivitiesText: {
+    textAlign: 'center',
+    color: '#666',
+    fontStyle: 'italic',
   },
 });
 

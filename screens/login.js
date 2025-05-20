@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-    View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, ScrollView, Platform, ActivityIndicator
+    View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, 
+    ScrollView, Platform, ActivityIndicator, Animated, Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import CheckBox from 'expo-checkbox';
 import { useNavigation } from '@react-navigation/native';
 import Header from '../components/header';
@@ -16,6 +18,27 @@ const Login = () => {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const navigation = useNavigation();
+
+    // Add animation values
+    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const slideAnim = useRef(new Animated.Value(50)).current;
+    const formSlide = useRef(new Animated.Value(Dimensions.get('window').height)).current;
+
+    useEffect(() => {
+        Animated.parallel([
+            Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 1000,
+                useNativeDriver: true,
+            }),
+            Animated.spring(formSlide, {
+                toValue: 0,
+                tension: 50,
+                friction: 8,
+                useNativeDriver: true,
+            })
+        ]).start();
+    }, []);
 
     const handleLogin = async () => {
         if (!email || !password) {
@@ -85,34 +108,50 @@ const Login = () => {
             >
                 <ScrollView contentContainerStyle={styles.scrollContainer}>
                     <Header />
-                    <View style={styles.contentContainer}>
+                    <Animated.View style={[styles.contentContainer, { opacity: fadeAnim }]}>
                         <View style={styles.titleContainer}>
                             <Text style={styles.titleMain}>SNSU</Text>
                             <Text style={styles.titleSub}>Lost and Found System</Text>
                         </View>
                         
-                        <View style={styles.formContainer}>
+                        <Animated.View style={[
+                            styles.formContainer,
+                            { transform: [{ translateY: formSlide }] }
+                        ]}>
                             <View style={styles.formBox}>
-                                {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                                {error ? (
+                                    <View style={styles.errorContainer}>
+                                        <Ionicons name="alert-circle" size={24} color="#FF4444" />
+                                        <Text style={styles.errorText}>{error}</Text>
+                                    </View>
+                                ) : null}
                                 
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="Email address"
-                                    value={email}
-                                    onChangeText={setEmail}
-                                    keyboardType="email-address"
-                                    autoCapitalize="none"
-                                    editable={!isLoading}
-                                />
+                                <View style={styles.inputContainer}>
+                                    <Ionicons name="mail-outline" size={24} color="#666" />
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Email address"
+                                        value={email}
+                                        onChangeText={setEmail}
+                                        keyboardType="email-address"
+                                        autoCapitalize="none"
+                                        editable={!isLoading}
+                                        placeholderTextColor="#999"
+                                    />
+                                </View>
                                 
-                                <TextInput
-                                    style={styles.input}
-                                    placeholder="Password"
-                                    value={password}
-                                    onChangeText={setPassword}
-                                    secureTextEntry
-                                    editable={!isLoading}
-                                />
+                                <View style={styles.inputContainer}>
+                                    <Ionicons name="lock-closed-outline" size={24} color="#666" />
+                                    <TextInput
+                                        style={styles.input}
+                                        placeholder="Password"
+                                        value={password}
+                                        onChangeText={setPassword}
+                                        secureTextEntry
+                                        editable={!isLoading}
+                                        placeholderTextColor="#999"
+                                    />
+                                </View>
                                 
                                 <View style={styles.rememberMeContainer}>
                                     <CheckBox
@@ -120,6 +159,7 @@ const Login = () => {
                                         onValueChange={setRememberMe}
                                         style={styles.checkbox}
                                         disabled={isLoading}
+                                        color="#4CAF50"
                                     />
                                     <Text style={styles.rememberMeText}>Remember me</Text>
                                 </View>
@@ -132,16 +172,19 @@ const Login = () => {
                                     {isLoading ? (
                                         <ActivityIndicator color="#fff" />
                                     ) : (
-                                        <Text style={styles.loginButtonText}>Log in</Text>
+                                        <>
+                                            <Text style={styles.loginButtonText}>Sign In</Text>
+                                            <Ionicons name="arrow-forward" size={20} color="#fff" />
+                                        </>
                                     )}
                                 </TouchableOpacity>
 
-                                <TouchableOpacity>
+                                <TouchableOpacity style={styles.forgotPasswordContainer}>
                                     <Text style={styles.forgotPassword}>Forgot Password?</Text>
                                 </TouchableOpacity>
                             </View>
-                        </View>
-                    </View>
+                        </Animated.View>
+                    </Animated.View>
                     <Footer />
                 </ScrollView>
             </LinearGradient>
@@ -169,51 +212,73 @@ const styles = StyleSheet.create({
         marginBottom: 30,
     },
     titleMain: {
-        fontSize: 42,
+        fontFamily: Platform.OS === 'ios' ? 'AvenirNext-Bold' : 'Roboto',
+        fontSize: 48,
         fontWeight: '900',
         color: '#006400',
         marginBottom: 10,
-        letterSpacing: 2,
-        textShadowColor: 'rgba(0, 100, 0, 0.15)',
+        letterSpacing: 4,
+        textShadowColor: 'rgba(0, 0, 0, 0.2)',
         textShadowOffset: { width: 1, height: 1 },
-        textShadowRadius: 2,
+        textShadowRadius: 3,
     },
     titleSub: {
-        fontSize: 34,
-        color: 'black',
+        fontFamily: Platform.OS === 'ios' ? 'AvenirNext-Regular' : 'Roboto',
+        fontSize: 24,
+        color: '#333',
         textAlign: 'center',
         marginBottom: 20,
         fontWeight: '600',
         letterSpacing: 1,
-        opacity: 0.9,
     },
     formContainer: {
         paddingHorizontal: 20,
         paddingVertical: 10,
     },
     formBox: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 15,
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderRadius: 20,
         padding: 30,
         paddingVertical: 40,
         shadowColor: '#000',
         shadowOffset: {
             width: 0,
-            height: 3,
+            height: 5,
         },
-        shadowOpacity: 0.25,
-        shadowRadius: 5,
-        elevation: 8,
+        shadowOpacity: 0.35,
+        shadowRadius: 8,
+        elevation: 10,
     },
-    input: {
-        backgroundColor: '#F5F5F5',
-        padding: 15,
-        paddingVertical: 18,
-        borderRadius: 8,
+    inputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F8F9FA',
+        borderRadius: 12,
         marginBottom: 20,
-        fontSize: 16,
         borderWidth: 1,
         borderColor: '#E0E0E0',
+        paddingHorizontal: 15,
+    },
+    input: {
+        flex: 1,
+        padding: 15,
+        paddingLeft: 10,
+        fontSize: 16,
+        color: '#333',
+    },
+    errorContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFE8E8',
+        padding: 15,
+        borderRadius: 12,
+        marginBottom: 20,
+    },
+    errorText: {
+        color: '#FF4444',
+        marginLeft: 10,
+        fontSize: 14,
+        flex: 1,
     },
     rememberMeContainer: {
         flexDirection: 'row',
@@ -229,18 +294,19 @@ const styles = StyleSheet.create({
     loginButton: {
         backgroundColor: '#4CAF50',
         padding: 15,
-        paddingVertical: 18,
-        borderRadius: 8,
+        borderRadius: 12,
+        flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 15,
-        elevation: 2,
+        justifyContent: 'center',
+        marginBottom: 20,
+        elevation: 3,
         shadowColor: '#000',
         shadowOffset: {
             width: 0,
-            height: 2,
+            height: 3,
         },
-        shadowOpacity: 0.2,
-        shadowRadius: 2,
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
     },
     disabledButton: {
         opacity: 0.7,
@@ -248,21 +314,19 @@ const styles = StyleSheet.create({
     loginButtonText: {
         color: '#FFFFFF',
         fontWeight: 'bold',
-        fontSize: 16,
+        fontSize: 18,
+        marginRight: 8,
+        letterSpacing: 1,
     },
-    errorText: {
-        color: '#ff0000',
-        backgroundColor: 'rgba(255, 0, 0, 0.1)',
-        padding: 10,
-        borderRadius: 5,
-        marginBottom: 15,
-        textAlign: 'center',
+    forgotPasswordContainer: {
+        alignItems: 'center',
     },
     forgotPassword: {
         color: '#4CAF50',
-        textAlign: 'center',
+        fontSize: 15,
+        fontWeight: '600',
         textDecorationLine: 'underline',
-    }
+    },
 });
 
 export default Login;

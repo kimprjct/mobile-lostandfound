@@ -122,8 +122,10 @@ const LostPage = () => {
             return;
         }
 
+        const item = lostItems.find((lostItem) => lostItem.id === itemId);
+
         navigation.navigate('Verification', {
-            verificationType: 'Lost Item Verification',
+            verificationType: 'Found Request Form', // Changed from "Lost Item Verification"
             itemId,
             onSubmit: async () => {
                 try {
@@ -133,8 +135,8 @@ const LostPage = () => {
                         itemId: itemId,
                         userId: auth.currentUser.uid,
                         status: 'unread',
-                        title: 'New Found Item Report',
-                        message: `A user has reported finding a lost item.`,
+                        title: `Found Request for ${item.name}`,
+                        description: `${auth.currentUser.displayName} requested that he found the lost ${item.name}`,
                         createdAt: serverTimestamp(),
                         userDetails: {
                             name: auth.currentUser.displayName || 'Anonymous',
@@ -167,9 +169,36 @@ const LostPage = () => {
     };
 
     const renderItem = (item) => {
-        const isSubmitted = submittedItems[item.id];
         const userStatus = userFoundStatus[item.id];
         const isUnderReview = userStatus === 'under_review';
+        const isRejected = userStatus === 'rejected';
+        const isApproved = userStatus === 'approved';
+
+        const getButtonState = () => {
+            if (isUnderReview) {
+                return {
+                    colors: ['#00CB14', '#00650A'],
+                    text: 'Found Under Review'
+                };
+            } else if (isApproved) {
+                return {
+                    colors: ['#4CAF50', '#2E7D32'],
+                    text: 'Found Successfully'
+                };
+            } else if (isRejected) {
+                return {
+                    colors: ['#7B6FA6', '#65558F'],
+                    text: 'I Found This'
+                };
+            } else {
+                return {
+                    colors: ['#7B6FA6', '#65558F'],
+                    text: 'I Found This'
+                };
+            }
+        };
+
+        const buttonState = getButtonState();
 
         return (
             <View style={styles.itemContainer} key={item.id}>
@@ -215,19 +244,31 @@ const LostPage = () => {
                     <Text style={[styles.detailValue, styles.description]}>{item.description}</Text>
                 </View>
 
-                <TouchableOpacity
-                    style={[
-                        styles.foundItButton,
-                        isUnderReview && styles.foundUnderReviewButton,
-                        isSubmitted && styles.foundItButtonSubmitted,
-                    ]}
-                    onPress={() => handleFoundIt(item.id)}
-                    disabled={isUnderReview || isSubmitted}
-                >
-                    <Text style={styles.foundItButtonText}>
-                        {isUnderReview ? 'Found Under Review' : isSubmitted ? 'Marked as Found' : 'Found It'}
-                    </Text>
-                </TouchableOpacity>
+                {isApproved ? (
+                    <View style={styles.foundByContainer}>
+                        <Text style={styles.foundByText}>
+                            Found by: {auth.currentUser?.displayName || 'User'}
+                        </Text>
+                        <Text style={styles.foundDateText}>
+                            {new Date(item.foundDate).toLocaleDateString()}
+                        </Text>
+                    </View>
+                ) : (
+                    <TouchableOpacity
+                        style={styles.foundItButton}
+                        onPress={() => handleFoundIt(item.id)}
+                        disabled={isUnderReview || isApproved}
+                    >
+                        <LinearGradient
+                            colors={buttonState.colors}
+                            style={styles.foundItButtonGradient}
+                        >
+                            <Text style={styles.foundItButtonText}>
+                                {buttonState.text}
+                            </Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                )}
             </View>
         );
     };
@@ -334,7 +375,7 @@ const styles = StyleSheet.create({
     },
     reportButtonText: {
         color: '#fff',
-        fontSize: 21,
+        fontSize: 24,
         fontWeight: 'bold',
         marginRight: 1,
         marginLeft: 4,
@@ -342,7 +383,7 @@ const styles = StyleSheet.create({
     reportButtonIcon: {
         width: 45,
         height: 45,
-        marginLeft: 3,
+        marginLeft: 2,
         resizeMode: 'contain',
     },
     emptyListText: {
@@ -417,15 +458,15 @@ const styles = StyleSheet.create({
         color: '#777',
     },
     foundItButton: {
-        backgroundColor: '#65558F',
+        marginTop: 10,
+        alignSelf: 'flex-end',
+        overflow: 'hidden',
+        borderRadius: 100,
+    },
+    foundItButtonGradient: {
         paddingVertical: 10,
         paddingHorizontal: 20,
         borderRadius: 100,
-        marginTop: 10,
-        alignSelf: 'flex-end',
-    },
-    foundItButtonSubmitted: {
-        backgroundColor: '#00CB14',
     },
     foundItButtonText: {
         color: '#fff',
@@ -473,8 +514,39 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
     },
-    foundUnderReviewButton: {
-        backgroundColor: '#00CB14',
+    foundByContainer: {
+        marginTop: 10,
+        padding: 10,
+        backgroundColor: '#f0f8ff',
+        borderRadius: 8,
+        width: '100%',
+    },
+    foundByText: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#4CAF50',
+    },
+    foundDateText: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
+    },
+    claimedByContainer: {
+        marginTop: 10,
+        padding: 10,
+        backgroundColor: '#f0f8ff',
+        borderRadius: 8,
+        width: '100%',
+    },
+    claimedByText: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#4CAF50',
+    },
+    claimDateText: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
     },
 });
 

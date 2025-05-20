@@ -7,6 +7,7 @@ import Phone from '../assets/Phone.png'; // Update the path to your phone image
 import { LinearGradient } from 'expo-linear-gradient'; // Import LinearGradient
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import { Ionicons } from '@expo/vector-icons';
 
 const FoundRequests = ({ navigation }) => {
   const [searchText, setSearchText] = useState('');
@@ -17,6 +18,18 @@ const FoundRequests = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [approvalReason, setApprovalReason] = useState('');
   const [rejectReason, setRejectReason] = useState('');
+  const [rejectModalVisible, setRejectModalVisible] = useState(false);
+  const [selectedRejectItem, setSelectedRejectItem] = useState(null);
+
+  const rejectionReasons = [
+    "The item description doesn't match our records",
+    "Insufficient proof of finding the item",
+    "The location information is unclear or inconsistent",
+    "The item has already been claimed by its owner",
+    "The item reported is not in our inventory",
+    "The report appears to be a duplicate",
+    "The information provided is incomplete"
+  ];
 
   useEffect(() => {
     // Set up real-time listener for found requests
@@ -61,8 +74,22 @@ const FoundRequests = ({ navigation }) => {
 
   const handleApprove = async () => {
     try {
-      // Generate system instructions for claiming
-      const systemInstructions = `Your found item request has been approved!\n\nItem Details:\n- Item Name: ${selectedItem.itemName}\n- Location Found: ${selectedItem.location}\n- Date Found: ${selectedItem.dateFound}\n\nClaiming Instructions:\n1. Visit the Lost and Found Office at the Student Affairs Office (SAO)\n2. Present a valid ID and the claim code: ${selectedItem.id.slice(0, 6).toUpperCase()}\n3. Office hours: Monday-Friday, 8:00 AM - 5:00 PM\n4. Please claim within 30 days\n\nNote: The item will be held for 30 days from the approval date. After this period, it may be disposed of or donated.`;
+      // Generate system instructions for submitting found items
+      const systemInstructions = `Your found item report has been approved!\n\n` +
+        `Item Details:\n` +
+        `- Item Name: ${selectedItem.itemName}\n` +
+        `- Location Found: ${selectedItem.location}\n` +
+        `- Date Found: ${selectedItem.dateFound}\n\n` +
+        `Instructions for Submitting the Item:\n` +
+        `1. Please bring the found item to the Lost and Found Office at the Student Affairs Office (SAO)\n` +
+        `2. Office hours: Monday-Friday, 8:00 AM - 5:00 PM\n` +
+        `3. Present your ID and this approval code: ${selectedItem.id.slice(0, 6).toUpperCase()}\n` +
+        `4. The office will handle contacting the owner\n\n` +
+        `Important Notes:\n` +
+        `- Please submit the item within 3 working days of this approval\n` +
+        `- The item should be in the same condition as when you found it\n` +
+        `- The office will issue you a receipt for the submitted item\n` +
+        `- For any questions, contact SAO at [office contact number]`;
 
       // Update the request status
       await updateDoc(doc(db, 'found_requests', selectedItem.id), {
@@ -86,15 +113,8 @@ const FoundRequests = ({ navigation }) => {
       // Create activity for admin dashboard
       await addDoc(collection(db, 'activities'), {
         type: 'found_request_approved',
-        description: `Found request for ${selectedItem.itemName} by ${selectedItem.userName} was approved`,
-        itemId: selectedItem.id,
-        itemName: selectedItem.itemName,
-        userId: selectedItem.userId,
-        userName: selectedItem.userName,
-        statusReason: systemInstructions,
-        status: 'unread',
-        title: 'Request Approved',
-        message: `Found request for ${selectedItem.itemName} was approved with standard claiming instructions.`,
+        description: `Found Request for ${selectedItem.itemName} by ${selectedItem.userName} was approved`,
+        referenceId: selectedItem.id,
         createdAt: serverTimestamp()
       });
 
@@ -107,73 +127,43 @@ const FoundRequests = ({ navigation }) => {
     }
   };
 
-  const handleReject = async () => {
-    try {
-      // Suggested rejection reasons
-      const rejectionReasons = [
-        "The item description doesn't match our records",
-        "Insufficient proof of finding the item",
-        "The location information is unclear or inconsistent",
-        "The item has already been claimed by its owner",
-        "The item reported is not in our inventory",
-        "The report appears to be a duplicate",
-        "The information provided is incomplete"
-      ];
+  const handleReject = (item) => {
+    setSelectedRejectItem(item);
+    setRejectModalVisible(true);
+  };
 
-      // Show rejection reason picker
-      Alert.alert(
-        'Select Rejection Reason',
-        'Choose a reason for rejecting the request:',
-        rejectionReasons.map(reason => ({
-          text: reason,
+  const handleClaimed = async (item) => {
+    Alert.alert(
+      'Confirm Claim',
+      'Are you sure the owner has physically claimed this item?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
           onPress: async () => {
-            const rejectionMessage = `Your found item request has been rejected.\n\nReason for rejection:\n${reason}\n\nIf you believe this is a mistake or have additional information to provide, please submit a new request with complete details.`;
-
-            // Update the request status
-            await updateDoc(doc(db, 'found_requests', selectedItem.id), {
-              status: 'rejected',
-              updatedAt: serverTimestamp(),
-              statusReason: rejectionMessage
-            });
-
-            // Create notification for the user
-            await addDoc(collection(db, 'notifications'), {
-              userId: selectedItem.userId,
-              type: 'found_request_rejected',
-              title: 'Found Request Rejected',
-              message: rejectionMessage,
-              itemId: selectedItem.id,
-              itemName: selectedItem.itemName,
-              status: 'unread',
-              createdAt: serverTimestamp()
-            });
-
-            // Create activity for admin dashboard
-            await addDoc(collection(db, 'activities'), {
-              type: 'found_request_rejected',
-              description: `Found request for ${selectedItem.itemName} by ${selectedItem.userName} was rejected`,
-              itemId: selectedItem.id,
-              itemName: selectedItem.itemName,
-              userId: selectedItem.userId,
-              userName: selectedItem.userName,
-              statusReason: rejectionMessage,
-              status: 'unread',
-              title: 'Request Rejected',
-              message: `Found request for ${selectedItem.itemName} was rejected with reason: ${reason}`,
-              createdAt: serverTimestamp()
-            });
-
-            Alert.alert('Success', `Found request for ${selectedItem.itemName} has been rejected!`);
-            setModalVisible(false);
-            setRejectReason('');
-          }
-        })),
-        { cancelable: true }
-      );
-    } catch (error) {
-      console.error('Error rejecting found request:', error);
-      Alert.alert('Error', 'Failed to reject the request. Please try again.');
-    }
+            try {
+              await updateDoc(doc(db, 'found_requests', item.id), {
+                status: 'retrieved',
+                retrievalDate: serverTimestamp(),
+                retrievalConfirmedBy: 'admin', // Optionally use auth.currentUser.displayName if available
+              });
+              await addDoc(collection(db, 'activities'), {
+                type: 'found_item_claimed',
+                description: `${item.userName} has claimed the lost item: ${item.itemName}`,
+                itemId: item.id,
+                createdAt: serverTimestamp(),
+                userId: item.userId,
+              });
+              Alert.alert('Success', 'Item marked as claimed and moved to Claim History.');
+              setModalVisible(false);
+            } catch (error) {
+              console.error('Error marking as claimed:', error);
+              Alert.alert('Error', 'Failed to mark as claimed.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const renderCard = (item) => (
@@ -198,6 +188,13 @@ const FoundRequests = ({ navigation }) => {
             {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
           </Text>
         </Text>
+        {/* Complete button for approved tab */}
+        {activeTab === 'approved' && (
+          <TouchableOpacity style={styles.completeButton} onPress={() => handleClaimed(item)}>
+            <Ionicons name="checkmark-circle" size={18} color="#fff" style={{ marginRight: 5 }} />
+            <Text style={styles.completeButtonText}>Complete</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -248,12 +245,24 @@ const FoundRequests = ({ navigation }) => {
           </View>
 
           <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
-              <Text style={{ color: 'white', fontWeight: 'bold' }}>APPROVE</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.rejectButton} onPress={handleReject}>
-              <Text style={{ color: 'white', fontWeight: 'bold' }}>REJECT</Text>
-            </TouchableOpacity>
+            {/* Only show Approve/Reject if pending */}
+            {selectedItem?.status === 'pending' && (
+              <>
+                <TouchableOpacity style={styles.approveButton} onPress={handleApprove}>
+                  <Text style={{ color: 'white', fontWeight: 'bold' }}>APPROVE</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.rejectButton} onPress={() => handleReject(selectedItem)}>
+                  <Text style={{ color: 'white', fontWeight: 'bold' }}>REJECT</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {/* Only show Complete if approved */}
+            {selectedItem?.status === 'approved' && (
+              <TouchableOpacity style={styles.completeButton} onPress={() => handleClaimed(selectedItem)}>
+                <Ionicons name="checkmark-circle" size={18} color="#fff" style={{ marginRight: 5 }} />
+                <Text style={styles.completeButtonText}>Complete</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -320,6 +329,83 @@ const FoundRequests = ({ navigation }) => {
       </ScrollView>
 
       {renderModal()}
+
+      <Modal
+        visible={rejectModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRejectModalVisible(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center'
+        }}>
+          <View style={{
+            backgroundColor: '#fff',
+            borderRadius: 10,
+            padding: 20,
+            width: '85%',
+            maxHeight: '70%'
+          }}>
+            <Text style={{ fontWeight: 'bold', fontSize: 18, marginBottom: 10 }}>Select Rejection Reason</Text>
+            <ScrollView style={{ maxHeight: 300 }}>
+              {rejectionReasons.map((reason, idx) => (
+                <TouchableOpacity
+                  key={idx}
+                  style={{
+                    paddingVertical: 12,
+                    borderBottomWidth: idx !== rejectionReasons.length - 1 ? 1 : 0,
+                    borderColor: '#eee'
+                  }}
+                  onPress={async () => {
+                    // Your rejection logic here
+                    const rejectionMessage = `Your request has been rejected.\n\nReason for rejection:\n${reason}\n\nIf you believe this is a mistake or have additional information to provide, please submit a new request with complete details.`;
+
+                    // Example for FoundRequests.js:
+                    await updateDoc(doc(db, 'found_requests', selectedRejectItem.id), {
+                      status: 'rejected',
+                      updatedAt: serverTimestamp(),
+                      statusReason: rejectionMessage
+                    });
+
+                    await addDoc(collection(db, 'notifications'), {
+                      userId: selectedRejectItem.userId,
+                      type: 'found_request_rejected',
+                      title: 'Found Request Rejected',
+                      message: rejectionMessage,
+                      itemId: selectedRejectItem.id,
+                      itemName: selectedRejectItem.itemName,
+                      status: 'unread',
+                      createdAt: serverTimestamp()
+                    });
+
+                    await addDoc(collection(db, 'activities'), {
+                      type: 'found_request_rejected',
+                      description: `Found Request for ${selectedRejectItem.itemName} by ${selectedRejectItem.userName} was rejected`,
+                      referenceId: selectedRejectItem.id,
+                      createdAt: serverTimestamp()
+                    });
+
+                    Alert.alert('Success', `Request for ${selectedRejectItem.itemName} has been rejected!`);
+                    setRejectModalVisible(false);
+                    setSelectedRejectItem(null);
+                  }}
+                >
+                  <Text style={{ fontSize: 16 }}>{reason}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={{ marginTop: 15, alignSelf: 'flex-end' }}
+              onPress={() => setRejectModalVisible(false)}
+            >
+              <Text style={{ color: '#007BFF', fontWeight: 'bold' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -332,21 +418,25 @@ const styles = StyleSheet.create({
   headerContainer: {
     flexDirection: 'row',
     marginTop: 20,
+    alignItems: 'center', // Added to align items vertically
+    position: 'relative',
   },
   sidebarWrapper: {
-    width: 55,
-    paddingTop: 40,
-    marginLeft: 10,
+    position: 'absolute',
+    left: 15,
+    top: 25,
+    zIndex: 999,
   },
   titleWrapper: {
     flex: 1,
     alignItems: 'center',
+    marginTop: 15, // Align with sidebar
+    marginBottom: 20, // Added margin for spacing
   },
   title: {
     fontSize: 25,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginTop: 20,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -413,7 +503,8 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 3,
     overflow: 'hidden',
-    height: 120,
+    minHeight: 100,
+    alignItems: 'center',
   },
   imageContainer: {
     width: 120,
@@ -574,6 +665,23 @@ const styles = StyleSheet.create({
   noImageText: {
     fontSize: 16,
     color: '#666',
+  },
+  completeButton: {
+    backgroundColor: 'green',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    paddingVertical: 6,
+    borderRadius: 5,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+  },
+  completeButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+    marginLeft: 5,
   },
 });
 

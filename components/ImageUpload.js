@@ -148,15 +148,62 @@ const ImageUpload = ({ onImagesUploaded, existingImages = [], maxImages = 5 }) =
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
+        allowsEditing: false,
         aspect: [4, 3],
         quality: 1,
+        allowsMultipleSelection: true,
+        selectionLimit: maxImages - images.length,
       });
 
-      await handleImageUpload(result);
+      if (!result.canceled && result.assets) {
+        setLoading(true);
+        setError(null);
+        
+        const uploadPromises = result.assets.map(async (asset) => {
+          try {
+            const { thumbnail, fullSize } = await compressImage(asset.uri);
+            
+            const thumbnailResult = await uploadImageToCloudinary(thumbnail);
+            if (!thumbnailResult.success) {
+              throw new Error(thumbnailResult.error || 'Failed to upload thumbnail');
+            }
+            
+            const fullSizeResult = await uploadImageToCloudinary(fullSize);
+            if (!fullSizeResult.success) {
+              throw new Error(fullSizeResult.error || 'Failed to upload full size image');
+            }
+            
+            return {
+              url: thumbnailResult.url,
+              fullSizeUrl: fullSizeResult.url,
+              publicId: fullSizeResult.publicId
+            };
+          } catch (error) {
+            console.error('Error processing image:', error);
+            throw error;
+          }
+        });
+
+        try {
+          const newImages = await Promise.all(uploadPromises);
+          const updatedImages = [...images, ...newImages];
+          setImages(updatedImages);
+          onImagesUploaded && onImagesUploaded(updatedImages);
+          setError(null);
+        } catch (error) {
+          console.error('Error uploading images:', error);
+          setError('Failed to upload one or more images. Please try again.');
+          Alert.alert(
+            'Upload Error',
+            'Failed to upload images. Please try again later.',
+            [{ text: 'OK' }]
+          );
+        }
+      }
     } catch (error) {
-      console.error('Error picking image:', error);
-      setError('Error selecting image');
+      console.error('Error picking images:', error);
+      setError('Error selecting images');
+    } finally {
       setLoading(false);
     }
   };
@@ -208,40 +255,47 @@ const ImageUpload = ({ onImagesUploaded, existingImages = [], maxImages = 5 }) =
 
   return (
     <View style={styles.container}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.scrollView}>
-        {images.map((image, index) => (
-          <View key={index} style={styles.imageContainer}>
-            <TouchableOpacity onPress={() => handleImagePress(image)}>
-              <Image source={{ uri: image.url }} style={styles.image} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.removeButton}
-              onPress={() => removeImage(index)}
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false} 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollViewContent}
+      >
+        <View style={styles.imagesContainer}>
+          {images.map((image, index) => (
+            <View key={index} style={styles.imageContainer}>
+              <TouchableOpacity onPress={() => handleImagePress(image)}>
+                <Image source={{ uri: image.url }} style={styles.image} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.removeButton}
+                onPress={() => removeImage(index)}
+              >
+                <MaterialIcons name="close" size={20} color="white" />
+              </TouchableOpacity>
+            </View>
+          ))}
+          
+          {images.length < maxImages && (
+            <TouchableOpacity 
+              onPress={showImageOptions} 
+              style={[styles.addButton, loading && styles.addButtonDisabled]}
+              disabled={loading}
             >
-              <MaterialIcons name="close" size={20} color="white" />
+              {loading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#4CAF50" />
+                  <Text style={styles.loadingText}>Uploading...</Text>
+                </View>
+              ) : (
+                <View style={styles.placeholder}>
+                  <MaterialIcons name="add-a-photo" size={40} color="#666" />
+                  <Text style={styles.placeholderText}>Add Photo</Text>
+                </View>
+              )}
             </TouchableOpacity>
-          </View>
-        ))}
-        
-        {images.length < maxImages && (
-          <TouchableOpacity 
-            onPress={showImageOptions} 
-            style={[styles.addButton, loading && styles.addButtonDisabled]}
-            disabled={loading}
-          >
-            {loading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#4CAF50" />
-                <Text style={styles.loadingText}>Uploading...</Text>
-              </View>
-            ) : (
-              <View style={styles.placeholder}>
-                <MaterialIcons name="add-a-photo" size={40} color="#666" />
-                <Text style={styles.placeholderText}>Add Photo</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        )}
+          )}
+        </View>
       </ScrollView>
       {error && (
         <View style={styles.errorContainer}>
@@ -269,8 +323,18 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     marginBottom: 10,
   },
+  scrollViewContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  imagesContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
   imageContainer: {
-    marginRight: 10,
+    marginHorizontal: 5,
     position: 'relative',
   },
   addButton: {

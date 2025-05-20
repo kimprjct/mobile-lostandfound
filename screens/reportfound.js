@@ -231,10 +231,9 @@ const ReportFoundPage = ({ navigation }) => {
                             <TextInput
                                 style={[styles.input, styles.textArea]}
                                 placeholder="Enter item description"
-                                value={form.description}
+                                 value={form.description}
                                 onChangeText={(value) => handleInputChange('description', value)}
                                 multiline
-                                numberOfLines={4}
                             />
                         </View>
                         <View style={styles.inputGroup}>
@@ -246,20 +245,26 @@ const ReportFoundPage = ({ navigation }) => {
                             />
                         </View>
 
-                        <TouchableOpacity 
-                            style={[
-                                styles.submitButton,
-                                isSubmitting && styles.submitButtonDisabled
-                            ]} 
-                            onPress={handleSubmit}
-                            disabled={isSubmitting}
-                        >
-                            {isSubmitting ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <Text style={styles.submitButtonText}>Submit Report</Text>
-                            )}
-                        </TouchableOpacity>
+                        <View style={styles.buttonContainer}>
+                            <TouchableOpacity 
+                                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]} 
+                                onPress={handleSubmit}
+                                disabled={isSubmitting}
+                            >
+                                {isSubmitting ? (
+                                    <ActivityIndicator color="#fff" />
+                                ) : (
+                                    <Text style={styles.submitButtonText}>Submit</Text>
+                                )}
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.cancelButton} 
+                                onPress={() => navigation.goBack()}
+                                disabled={isSubmitting}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                        </View>
                     </ScrollView>
                 </View>
             </View>
@@ -276,78 +281,105 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     headerContainer: {
-        paddingTop: 20,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 10,
+    },
+    titleContainer: {
+        marginTop: 140,
+        alignItems: 'center',
+    },
+    title: {
+        fontSize: 28,
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
     contentContainer: {
         flex: 1,
-        paddingHorizontal: 20,
-        paddingBottom: 20,
-    },
-    titleContainer: {
+        marginTop: 20,
         alignItems: 'center',
-        marginVertical: 20,
-    },
-    title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#333',
     },
     formCard: {
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        borderRadius: 15,
-        padding: 20,
-        elevation: 3,
+        width: 382,
+        height: 600,
+        backgroundColor: 'rgba(255, 254, 254, 0.4)',
+        borderWidth: 1,
+        borderColor: '#000',
+        borderRadius: 12,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
+        shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.25,
-        shadowRadius: 3.84,
+        shadowRadius: 4,
+        padding: 20,
     },
     formContainer: {
-        paddingBottom: 20,
+        flexGrow: 1,
+        paddingBottom: 50,
     },
     inputGroup: {
+        flexDirection: 'row',
+        alignItems: 'center',
         marginBottom: 15,
     },
     label: {
         fontSize: 16,
-        marginBottom: 5,
-        color: '#333',
-        fontWeight: '500',
+        fontWeight: 'bold',
+        marginRight: 10,
+        width: 100,
     },
     input: {
-        backgroundColor: '#fff',
+        backgroundColor: '#D9D9D9',
         borderRadius: 8,
-        padding: 12,
-        borderWidth: 1,
-        borderColor: '#ddd',
+        height: 40,
+        flex: 1,
+        paddingHorizontal: 10,
     },
     textArea: {
-        height: 100,
-        textAlignVertical: 'top',
+        height: 108,
     },
     dateTimeInput: {
-        backgroundColor: '#fff',
+        backgroundColor: '#D9D9D9',
         borderRadius: 8,
-        padding: 12,
-        borderWidth: 1,
-        borderColor: '#ddd',
+        height: 40,
+        flex: 1,
+        justifyContent: 'center',
+        paddingHorizontal: 10,
     },
     dateTimeText: {
-        color: '#333',
+        color: '#000',
+    },
+    buttonContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 30,
     },
     submitButton: {
-        backgroundColor: '#4CAF50',
-        padding: 15,
+        backgroundColor: '#2c2c2c',
+        padding: 10,
         borderRadius: 8,
+        width: '40%',
         alignItems: 'center',
-        marginTop: 20,
     },
     submitButtonDisabled: {
-        backgroundColor: '#A5D6A7', // lighter green
+        backgroundColor: '#999',
     },
     submitButtonText: {
         color: '#fff',
-        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    cancelButton: {
+        backgroundColor: '#E6E6E6',
+        padding: 10,
+        borderRadius: 8,
+        width: '40%',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#2c2c2c',
+    },
+    cancelButtonText: {
+        color: '#2c2c2c',
         fontWeight: 'bold',
     },
     footerContainer: {

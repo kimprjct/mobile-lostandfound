@@ -9,9 +9,9 @@ import {
     Image,
     Alert,
     Platform,
+    ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import CheckBox from 'expo-checkbox';
 import Header from '../components/header';
@@ -20,9 +20,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth } from '../firebaseConfig';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import ImageUpload from '../components/ImageUpload';
 
 const VerificationForm = ({ navigation, route }) => {
-    const { verificationType = 'Lost Item Verification', itemId, onSubmit } = route.params || {}; // Default to "Lost Item Verification"
+    const { verificationType = 'Found Request Form', itemId, onSubmit } = route.params || {};
 
     const [form, setForm] = useState({
         itemName: '',
@@ -31,55 +32,55 @@ const VerificationForm = ({ navigation, route }) => {
         location: '',
         contact: '',
         description: '',
-        image: null,
+        images: [],
     });
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [certified, setCertified] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleInputChange = (field, value) => {
         setForm({ ...form, [field]: value });
     };
 
-    const handleImagePick = async () => {
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission Denied', 'We need permission to access your photos.');
-            return;
-        }
-
-        const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [4, 3],
-            quality: 1,
-        });
-
-        if (!result.canceled) {
-            const fileName = result.assets[0].uri.split('/').pop();
-            setForm({ ...form, image: fileName });
-        }
+    const handleImagesUploaded = (images) => {
+        setForm(prev => ({
+            ...prev,
+            images: images.map(img => ({
+                url: img.url,
+                publicId: img.publicId
+            }))
+        }));
     };
 
     const handleSubmit = async () => {
+        if (isSubmitting) return;
+
         if (!certified) {
             Alert.alert('Certification Required', 'Please certify that the information provided is truthful.');
             return;
         }
 
-        if (!form.itemName || !form.location || !form.contact || !form.description || !form.image) {
-            Alert.alert('Error', 'Please fill out all fields and upload a photo.');
+        if (!form.itemName || !form.location || !form.contact || !form.description) {
+            Alert.alert('Error', 'Please fill out all fields.');
+            return;
+        }
+
+        if (form.images.length === 0) {
+            Alert.alert('Error', 'Please upload at least one image');
             return;
         }
 
         try {
+            setIsSubmitting(true);
+
             const userProfile = await AsyncStorage.getItem('userProfile');
             if (!userProfile) {
                 Alert.alert('Error', 'User profile not found. Please log in again.');
                 return;
             }
 
-            const { name: userName, email: userEmail } = JSON.parse(userProfile);
+            const { name: userName, email: userEmail, gender } = JSON.parse(userProfile);
             const currentUser = auth.currentUser;
 
             if (!currentUser) {
@@ -96,7 +97,7 @@ const VerificationForm = ({ navigation, route }) => {
                 location: form.location,
                 contact: form.contact,
                 description: form.description,
-                image: form.image,
+                images: form.images,
                 userId: currentUser.uid,
                 userName,
                 userEmail,
@@ -106,15 +107,17 @@ const VerificationForm = ({ navigation, route }) => {
             };
 
             // Add to appropriate collection based on verification type
-            const collectionName = verificationType === 'Lost Item Verification' ? 'found_requests' : 'claim_requests';
+            const collectionName = verificationType === 'Found Request Form' ? 'found_requests' : 'claim_requests';
             const docRef = await addDoc(collection(db, collectionName), verificationData);
 
-            // Create single notification for the request
+            // Create notification for user
             const notificationData = {
                 userId: currentUser.uid,
-                type: verificationType === 'Lost Item Verification' ? 'found_request_submitted' : 'claim_request_submitted',
-                title: verificationType === 'Lost Item Verification' ? 'Found Item Request Submitted' : 'Claim Request Submitted',
-                message: verificationType === 'Lost Item Verification' 
+                type: verificationType === 'Found Request Form' ? 'found_request_submitted' : 'claim_request_submitted',
+                title: verificationType === 'Found Request Form' 
+                    ? `You requested that you found the lost ${form.itemName}`
+                    : `You requested to claim the found ${form.itemName}`,
+                message: verificationType === 'Found Request Form' 
                     ? `Your request to report finding the item "${form.itemName}" has been submitted. We will review your request and notify you of any updates.`
                     : `Your request to claim the item "${form.itemName}" has been submitted. We will review your request and notify you of any updates.`,
                 itemId: docRef.id,
@@ -125,20 +128,30 @@ const VerificationForm = ({ navigation, route }) => {
             await addDoc(collection(db, 'notifications'), notificationData);
 
             // Create activity for admin dashboard
-            const activityData = {
-                type: verificationType === 'Lost Item Verification' ? 'found_request_submitted' : 'claim_request_submitted',
-                description: `${userName} submitted a ${verificationType.toLowerCase()} for ${form.itemName}`,
-                itemId: docRef.id,
-                itemName: form.itemName,
-                userId: currentUser.uid,
-                userName,
-                userEmail,
-                status: 'unread',
-                title: 'New Request Submitted',
-                message: `${userName} has submitted a ${verificationType.toLowerCase()} for ${form.itemName}`,
-                createdAt: serverTimestamp()
-            };
-            await addDoc(collection(db, 'activities'), activityData);
+            if (userName && userName !== 'null') {
+                const activityData = {
+                    type: verificationType === 'Found Request Form' ? 'found_request' : 'claim_request',
+                    description: verificationType === 'Found Request Form'
+                        ? `${userName} requested that ${gender === 'Female' ? 'she' : 'he'} found the lost ${form.itemName}`
+                        : `${userName} requested to claim the found ${form.itemName}`,
+                    referenceId: itemId,
+                    itemId: itemId,
+                    itemName: form.itemName,
+                    userId: currentUser.uid,
+                    userName,
+                    userEmail,
+                    userGender: gender,
+                    status: 'unread',
+                    createdAt: serverTimestamp()
+                };
+
+                try {
+                    // Create activity record
+                    await addDoc(collection(db, 'activities'), activityData);
+                } catch (error) {
+                    console.error('Error creating activity:', error);
+                }
+            }
 
             Alert.alert(
                 'Success',
@@ -151,6 +164,8 @@ const VerificationForm = ({ navigation, route }) => {
         } catch (error) {
             console.error('Error submitting verification:', error);
             Alert.alert('Error', 'Failed to submit verification. Please try again.');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -162,7 +177,7 @@ const VerificationForm = ({ navigation, route }) => {
             location: '',
             contact: '',
             description: '',
-            image: null,
+            images: [],
         });
         setCertified(false);
     };
@@ -179,7 +194,6 @@ const VerificationForm = ({ navigation, route }) => {
             </View>
 
             <View style={styles.titleContainer}>
-                {/* Ensure the title is "Lost Item Verification" */}
                 <Text style={styles.title}>{verificationType}</Text>
             </View>
 
@@ -271,43 +285,49 @@ const VerificationForm = ({ navigation, route }) => {
                             <Text style={styles.label}>Description:</Text>
                             <TextInput
                                 style={[styles.input, styles.textArea]}
-                                placeholder="Enter description of the lost item"
+                                placeholder="Enter description of the item"
                                 value={form.description}
                                 onChangeText={(value) => handleInputChange('description', value)}
                                 multiline
                             />
                         </View>
 
-                        {/* Upload Photo */}
+                        {/* Upload Photos */}
                         <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Upload Photo:</Text>
-                            {!form.image ? (
-                                <TouchableOpacity style={styles.uploadPhotoButton} onPress={handleImagePick}>
-                                    <Image
-                                        source={require('../assets/uploadicon.png')}
-                                        style={styles.uploadIcon}
-                                    />
-                                    <Text style={styles.uploadPhotoText}>Upload Photo</Text>
-                                </TouchableOpacity>
-                            ) : (
-                                <Text style={styles.fileNameText}>{form.image}</Text>
-                            )}
+                            <Text style={styles.label}>Upload Photos:</Text>
+                            <ImageUpload
+                                onImagesUploaded={handleImagesUploaded}
+                                existingImages={form.images.map(img => img.url)}
+                                maxImages={3}
+                            />
                         </View>
 
                         {/* Certification Checkbox */}
                         <View style={styles.checkboxContainer}>
                             <CheckBox value={certified} onValueChange={setCertified} />
                             <Text style={styles.checkboxText}>
-                                I certify that I lost this item and the information provided is accurate and truthful.
+                                I certify that the information provided is accurate and truthful.
                             </Text>
                         </View>
 
                         {/* Submit and Reset Buttons */}
                         <View style={styles.buttonContainer}>
-                            <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-                                <Text style={styles.submitButtonText}>Submit</Text>
+                            <TouchableOpacity 
+                                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]} 
+                                onPress={handleSubmit}
+                                disabled={isSubmitting}
+                            >
+                                {isSubmitting ? (
+                                    <ActivityIndicator color="#fff" />
+                                ) : (
+                                    <Text style={styles.submitButtonText}>Submit</Text>
+                                )}
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.resetButton} onPress={handleReset}>
+                            <TouchableOpacity 
+                                style={styles.resetButton} 
+                                onPress={handleReset}
+                                disabled={isSubmitting}
+                            >
                                 <Text style={styles.resetButtonText}>Reset</Text>
                             </TouchableOpacity>
                         </View>
@@ -347,7 +367,7 @@ const styles = StyleSheet.create({
     },
     formCard: {
         width: 382,
-        height: 650,
+        height: 600,
         backgroundColor: 'rgba(255, 254, 254, 0.4)',
         borderWidth: 1,
         borderColor: '#000',
@@ -394,35 +414,6 @@ const styles = StyleSheet.create({
     dateTimeText: {
         color: '#000',
     },
-    uploadPhotoButton: {
-        backgroundColor: '#D9D9D9',
-        borderRadius: 8,
-        height: 40,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flex: 1,
-    },
-    uploadIcon: {
-        width: 20,
-        height: 20,
-        marginRight: 10,
-    },
-    uploadPhotoText: {
-        fontSize: 16,
-        color: '#000',
-    },
-    previewImage: {
-        width: '100%',
-        height: 150,
-        borderRadius: 10,
-        marginBottom: 20,
-    },
-    fileNameText: {
-        fontSize: 14,
-        color: '#000',
-        marginTop: 10,
-    },
     checkboxContainer: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -446,6 +437,9 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         width: '40%',
         alignItems: 'center',
+    },
+    submitButtonDisabled: {
+        backgroundColor: '#999',
     },
     submitButtonText: {
         color: '#fff',

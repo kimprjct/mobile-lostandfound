@@ -34,6 +34,33 @@ const getNotificationIcon = (type) => {
     return '•';
 };
 
+const formatTimeAgo = (timestamp) => {
+    if (!timestamp) return 'N/A';
+
+    const now = new Date();
+    const date = new Date(timestamp);
+    const diffInSeconds = Math.floor((now - date) / 1000);
+    const diffInMinutes = Math.floor(diffInSeconds / 60);
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    const diffInDays = Math.floor(diffInHours / 24);
+
+    if (diffInSeconds < 60) {
+        return 'Just now';
+    } else if (diffInMinutes < 60) {
+        return `${diffInMinutes} ${diffInMinutes === 1 ? 'minute' : 'minutes'} ago`;
+    } else if (diffInHours < 24) {
+        return `${diffInHours} ${diffInHours === 1 ? 'hour' : 'hours'} ago`;
+    } else if (diffInDays < 7) {
+        return `${diffInDays} ${diffInDays === 1 ? 'day' : 'days'} ago`;
+    } else {
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    }
+};
+
 const NotificationsScreen = () => {
     const [notifications, setNotifications] = useState([]);
     const [selectedNotification, setSelectedNotification] = useState(null);
@@ -59,52 +86,48 @@ const NotificationsScreen = () => {
 
         const loadNotifications = async () => {
             try {
-                // Load notifications from AsyncStorage
+                // First try to load from AsyncStorage
                 const storedNotifications = await AsyncStorage.getItem('notifications');
                 if (storedNotifications) {
-                    setNotifications(JSON.parse(storedNotifications));
+                    const parsedNotifications = JSON.parse(storedNotifications);
+                    setNotifications(parsedNotifications);
+                    setLoading(false);
                 }
 
+                // Then set up real-time listener if user is logged in
                 if (user) {
-                    // Create a query for user's notifications
                     const notificationsQuery = query(
                         collection(db, 'notifications'),
                         where('userId', '==', user.uid),
                         orderBy('createdAt', 'desc')
                     );
 
-                    // Set up real-time listener
                     unsubscribeNotifications = onSnapshot(notificationsQuery, async (snapshot) => {
                         try {
                             const promises = snapshot.docs.map(async (docSnapshot) => {
                                 const data = docSnapshot.data();
                                 let itemData = null;
 
-                                // Fetch item details if itemId exists
                                 if (data.itemId) {
-                                    try {
-                                        // Determine the collection name based on the notification type
-                                        let collectionName;
-                                        if (data.type.includes('claim_request')) {
-                                            collectionName = 'claim_requests';
-                                        } else if (data.type.includes('found_request')) {
-                                            collectionName = 'found_requests';
-                                        } else if (data.type.includes('lost')) {
-                                            collectionName = 'lost_items';
-                                        } else {
-                                            collectionName = 'found_items';
-                                        }
+                                    // Determine the collection name based on the notification type
+                                    let collectionName;
+                                    if (data.type.includes('claim_request')) {
+                                        collectionName = 'claim_requests';
+                                    } else if (data.type.includes('found_request')) {
+                                        collectionName = 'found_requests';
+                                    } else if (data.type.includes('lost')) {
+                                        collectionName = 'lost_items';
+                                    } else {
+                                        collectionName = 'found_items';
+                                    }
 
-                                        const itemDocRef = doc(db, collectionName, data.itemId);
-                                        const itemDocSnap = await getDoc(itemDocRef);
-                                        if (itemDocSnap.exists()) {
-                                            itemData = {
-                                                ...itemDocSnap.data(),
-                                                id: itemDocSnap.id
-                                            };
-                                        }
-                                    } catch (error) {
-                                        console.error('Error fetching item details:', error);
+                                    const itemDocRef = doc(db, collectionName, data.itemId);
+                                    const itemDocSnap = await getDoc(itemDocRef);
+                                    if (itemDocSnap.exists()) {
+                                        itemData = {
+                                            ...itemDocSnap.data(),
+                                            id: itemDocSnap.id
+                                        };
                                     }
                                 }
 
@@ -112,28 +135,27 @@ const NotificationsScreen = () => {
                                     id: docSnapshot.id,
                                     ...data,
                                     itemData,
-                                    createdAt: data.createdAt?.toDate?.()?.toLocaleString() || 'N/A'
+                                    createdAt: data.createdAt?.toDate?.() || new Date(),
+                                    timestamp: formatTimeAgo(data.createdAt?.toDate())
                                 };
                             });
 
                             const resolvedNotifications = await Promise.all(promises);
-                            
-                            // Store notifications in AsyncStorage
-                            await AsyncStorage.setItem('notifications', JSON.stringify(resolvedNotifications));
-                            setNotifications(resolvedNotifications);
+
+                            // Merge with existing notifications
+                            const mergedNotifications = [...resolvedNotifications];
+
+                            // Update both state and AsyncStorage
+                            setNotifications(mergedNotifications);
+                            await AsyncStorage.setItem('notifications', JSON.stringify(mergedNotifications));
                         } catch (error) {
                             console.error('Error processing notifications:', error);
-                            Alert.alert(
-                                'Error',
-                                'There was an error loading your notifications. Please try again later.'
-                            );
-                        } finally {
-                            setLoading(false);
                         }
                     });
                 }
             } catch (error) {
-                console.error('Error loading notifications:', error);
+                console.error('Error in loadNotifications:', error);
+            } finally {
                 setLoading(false);
             }
         };
@@ -147,9 +169,22 @@ const NotificationsScreen = () => {
         };
     }, [user]);
 
+    // Add this useEffect for periodic timestamp updates
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setNotifications(currentNotifications => 
+                currentNotifications.map(notification => ({
+                    ...notification,
+                    timestamp: formatTimeAgo(notification.createdAt)
+                }))
+            );
+        }, 60000); // Update every minute
+
+        return () => clearInterval(interval);
+    }, []);
+
     const handleNotificationPress = async (notification) => {
         if (isSelectionMode) {
-            // Handle selection
             const newSelected = new Set(selectedNotifications);
             if (newSelected.has(notification.id)) {
                 newSelected.delete(notification.id);
@@ -163,22 +198,26 @@ const NotificationsScreen = () => {
         setSelectedNotification(notification);
         setModalVisible(true);
 
-        // Mark notification as read if it's unread
+        // Mark notification as read if it's unread, but don't delete it
         if (notification.status === 'unread') {
             try {
-                // Update in Firestore if user is logged in
+                const updatedNotification = { ...notification, status: 'read' };
+
+                // Update in Firestore
                 if (user) {
                     await updateDoc(doc(db, 'notifications', notification.id), {
                         status: 'read'
                     });
                 }
 
-                // Update in local storage
+                // Update local state
                 const updatedNotifications = notifications.map(n => 
-                    n.id === notification.id ? { ...n, status: 'read' } : n
+                    n.id === notification.id ? updatedNotification : n
                 );
-                await AsyncStorage.setItem('notifications', JSON.stringify(updatedNotifications));
                 setNotifications(updatedNotifications);
+
+                // Update in AsyncStorage
+                await AsyncStorage.setItem('notifications', JSON.stringify(updatedNotifications));
             } catch (error) {
                 console.error('Error marking notification as read:', error);
             }
@@ -268,26 +307,12 @@ const NotificationsScreen = () => {
                     </View>
                     <Text style={styles.title}>{notification.title}</Text>
                 </View>
-                
-                {notification.itemData && notification.itemData.images && notification.itemData.images.length > 0 && (
-                    <ScrollView 
-                        horizontal 
-                        showsHorizontalScrollIndicator={false}
-                        style={styles.imageScrollView}
-                    >
-                        {notification.itemData.images.map((image, index) => (
-                            <Image 
-                                key={index}
-                                source={{ uri: image.url }}
-                                style={styles.image}
-                                resizeMode="cover"
-                            />
-                        ))}
-                    </ScrollView>
-                )}
-                
-                <Text style={styles.message}>{notification.message}</Text>
-                <Text style={styles.timestamp}>{notification.createdAt}</Text>
+                <Text style={styles.message} numberOfLines={2} ellipsizeMode="tail">
+                    {notification.message}
+                </Text>
+                <Text style={styles.timestamp}>
+                    {formatTimeAgo(notification.createdAt)}
+                </Text>
             </TouchableOpacity>
         );
     };
@@ -476,6 +501,8 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: '600',
         marginBottom: 10,
+        textAlign: 'left',
+        flex: 1,
     },
     message: {
         fontSize: 16,
@@ -582,6 +609,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 10,
+        width: '100%',
     },
     statusIcon: {
         width: 24,
@@ -590,11 +618,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 10,
-    },
-    statusIconText: {
-        color: 'white',
-        fontSize: 14,
-        fontWeight: 'bold',
+        flexShrink: 0,
     },
     selectedCard: {
         backgroundColor: 'rgba(76, 102, 255, 0.1)',

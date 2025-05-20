@@ -17,7 +17,7 @@ import Footer from '../components/footer';
 import SearchBar from '../components/searchbar';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, where } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../firebaseConfig';
 
 const FoundPage = () => {
@@ -39,15 +39,17 @@ const FoundPage = () => {
         };
         checkLoginStatus();
 
-        // Set up real-time listener for found items
-        const foundItemsQuery = query(
-            collection(db, 'found_items'),
-            orderBy('createdAt', 'desc')
-        );
+        const fetchFoundItems = async () => {
+            console.log('Fetching found_items...');
+            const foundItemsQuery = query(
+                collection(db, 'found_items'),
+                orderBy('createdAt', 'desc')
+            );
+            const foundSnapshot = await getDocs(foundItemsQuery);
+            console.log('Found items count:', foundSnapshot.size);
 
-        const unsubscribe = onSnapshot(foundItemsQuery, (snapshot) => {
             const items = [];
-            snapshot.forEach((doc) => {
+            foundSnapshot.forEach((doc) => {
                 const data = doc.data();
                 items.push({
                     id: doc.id,
@@ -60,13 +62,14 @@ const FoundPage = () => {
             setFoundItems(items);
             setFilteredItems(items);
             setLoading(false);
-        }, (error) => {
-            console.error('Error fetching found items:', error);
-            setLoading(false);
-        });
+        };
+
+        fetchFoundItems();
 
         // Cleanup subscription
-        return () => unsubscribe();
+        return () => {
+            // cleanup logic here if you have any
+        };
     }, []);
 
     useEffect(() => {
@@ -117,18 +120,20 @@ const FoundPage = () => {
         }
 
         navigation.navigate('Verification', {
-            verificationType: "Owner's Item Verification",
+            verificationType: 'Claim Request Form', // Changed from "Owner's Item Verification"
             itemId,
             onSubmit: async () => {
                 try {
+                    const item = foundItems.find((foundItem) => foundItem.id === itemId);
+
                     // Create admin notification
                     await addDoc(collection(db, 'activities'), {
                         type: 'claim_request',
                         itemId: itemId,
                         userId: auth.currentUser.uid,
                         status: 'unread',
-                        title: 'New Claim Request',
-                        message: `A user has submitted a claim request for a found item.`,
+                        title: `Claim Request for ${item.name}`,
+                        description: `${auth.currentUser.displayName} requested to claim the found ${item.name}`,
                         createdAt: serverTimestamp(),
                         userDetails: {
                             name: auth.currentUser.displayName || 'Anonymous',
@@ -161,9 +166,36 @@ const FoundPage = () => {
     };
 
     const renderItem = (item) => {
-        const isSubmitted = submittedItems[item.id];
         const userStatus = userClaimStatus[item.id];
         const isUnderReview = userStatus === 'under_review';
+        const isRejected = userStatus === 'rejected';
+        const isApproved = userStatus === 'approved';
+
+        const getButtonState = () => {
+            if (isUnderReview) {
+                return {
+                    colors: ['#00CB14', '#00650A'],
+                    text: 'Claim Under Review'
+                };
+            } else if (isApproved) {
+                return {
+                    colors: ['#4CAF50', '#2E7D32'],
+                    text: 'Claimed Successfully'
+                };
+            } else if (isRejected) {
+                return {
+                    colors: ['#7B6FA6', '#65558F'],
+                    text: 'Claim This Item'
+                };
+            } else {
+                return {
+                    colors: ['#7B6FA6', '#65558F'],
+                    text: 'Claim This Item'
+                };
+            }
+        };
+
+        const buttonState = getButtonState();
 
         return (
             <View style={styles.itemContainer} key={item.id}>
@@ -209,19 +241,31 @@ const FoundPage = () => {
                     <Text style={[styles.detailValue, styles.description]}>{item.description}</Text>
                 </View>
 
-                <TouchableOpacity
-                    style={[
-                        styles.claimItButton,
-                        isUnderReview && styles.claimUnderReviewButton,
-                        isSubmitted && styles.claimItButtonSubmitted,
-                    ]}
-                    onPress={() => handleClaimIt(item.id)}
-                    disabled={isUnderReview || isSubmitted}
-                >
-                    <Text style={styles.claimItButtonText}>
-                        {isUnderReview ? 'Claim Under Review' : isSubmitted ? 'Claimed' : 'Claim It'}
-                    </Text>
-                </TouchableOpacity>
+                {isApproved ? (
+                    <View style={styles.claimedByContainer}>
+                        <Text style={styles.claimedByText}>
+                            Claimed by: {auth.currentUser?.displayName || 'User'}
+                        </Text>
+                        <Text style={styles.claimDateText}>
+                            {new Date(item.claimDate).toLocaleDateString()}
+                        </Text>
+                    </View>
+                ) : (
+                    <TouchableOpacity
+                        style={styles.claimItButton}
+                        onPress={() => handleClaimIt(item.id)}
+                        disabled={isUnderReview || isApproved}
+                    >
+                        <LinearGradient
+                            colors={buttonState.colors}
+                            style={styles.claimItButtonGradient}
+                        >
+                            <Text style={styles.claimItButtonText}>
+                                {buttonState.text}
+                            </Text>
+                        </LinearGradient>
+                    </TouchableOpacity>
+                )}
             </View>
         );
     };
@@ -342,14 +386,13 @@ const styles = StyleSheet.create({
     },
     reportButtonText: {
         color: '#fff',
-        fontSize: 20,
+        fontSize: 24,
         fontWeight: 'bold',
         marginRight: 5,
     },
     reportButtonIcon: {
-        width: 24,
-        height: 24,
-        tintColor: '#fff',
+        width: 34,
+        height: 34,
     },
     itemContainer: {
         backgroundColor: '#fff',
@@ -417,15 +460,15 @@ const styles = StyleSheet.create({
         color: '#777',
     },
     claimItButton: {
-        backgroundColor: '#65558F',
+        marginTop: 10,
+        alignSelf: 'flex-end',
+        overflow: 'hidden',
+        borderRadius: 100,
+    },
+    claimItButtonGradient: {
         paddingVertical: 10,
         paddingHorizontal: 20,
         borderRadius: 100,
-        marginTop: 10,
-        alignSelf: 'flex-end',
-    },
-    claimItButtonSubmitted: {
-        backgroundColor: '#00CB14',
     },
     claimItButtonText: {
         color: '#fff',
@@ -484,8 +527,39 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
     },
-    claimUnderReviewButton: {
-        backgroundColor: '#00CB14',
+    claimedByContainer: {
+        marginTop: 10,
+        padding: 10,
+        backgroundColor: '#f0f8ff',
+        borderRadius: 8,
+        width: '100%',
+    },
+    claimedByText: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#4CAF50',
+    },
+    claimDateText: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
+    },
+    foundByContainer: {
+        marginTop: 10,
+        padding: 10,
+        backgroundColor: '#f0f8ff',
+        borderRadius: 8,
+        width: '100%',
+    },
+    foundByText: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#4CAF50',
+    },
+    foundDateText: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
     },
 });
 

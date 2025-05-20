@@ -27,6 +27,8 @@ const AdminManageFound = ({ navigation }) => {
   const [foundItems, setFoundItems] = useState([]);
   const [filteredItems, setFilteredItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
 
   useEffect(() => {
     const foundItemsQuery = query(
@@ -188,6 +190,15 @@ const AdminManageFound = ({ navigation }) => {
     setSelectedItem(null);
   };
 
+  const handleImagePress = (index) => {
+    setSelectedImageIndex(index);
+    setIsImageViewerVisible(true);
+  };
+
+  const handleCloseImageViewer = () => {
+    setIsImageViewerVisible(false);
+  };
+
   return (
     <View style={styles.container}>
       <AdminHeader
@@ -200,7 +211,7 @@ const AdminManageFound = ({ navigation }) => {
           <SidebarMenu
             navigation={navigation}
             onClose={() => setIsSidebarVisible(false)}
-            style={styles.sidebarInline}
+            currentScreen="AdminManageFound"
           />
         )}
         <Text style={styles.pageTitle}>FOUND ITEMS</Text>
@@ -263,21 +274,63 @@ const AdminManageFound = ({ navigation }) => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            {selectedItem?.images && selectedItem.images.length > 0 ? (
-              <Image
-                source={{ uri: selectedItem.images[0].url }}
-                style={styles.modalImage}
-                resizeMode="contain"
-              />
-            ) : (
-              <View style={styles.noImageContainer}>
-                <Text style={styles.noImageText}>No image available</Text>
-              </View>
-            )}
+            <View style={styles.modalImageContainer}>
+              <ScrollView 
+                horizontal 
+                pagingEnabled 
+                showsHorizontalScrollIndicator={false}
+                style={styles.imageScrollView}
+                contentContainerStyle={styles.imageScrollViewContent}
+                onScroll={(event) => {
+                  const slideSize = Dimensions.get('window').width * 0.85;
+                  const currentIndex = Math.round(event.nativeEvent.contentOffset.x / slideSize);
+                  if (currentIndex !== selectedImageIndex) {
+                    setSelectedImageIndex(currentIndex);
+                  }
+                }}
+                scrollEventThrottle={16}
+              >
+                {selectedItem?.images && selectedItem.images.length > 0 ? (
+                  selectedItem.images.map((image, index) => (
+                    <View key={index} style={styles.imageSlide}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setSelectedImageIndex(index);
+                          setIsImageViewerVisible(true);
+                        }}
+                      >
+                        <Image
+                          source={{ uri: image.url }}
+                          style={styles.modalImage}
+                          resizeMode="contain"
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                ) : (
+                  <View style={styles.noImageContainer}>
+                    <Text style={styles.noImageText}>No image available</Text>
+                  </View>
+                )}
+              </ScrollView>
+              {selectedItem?.images && selectedItem.images.length > 1 && (
+                <View style={styles.imagePaginationDots}>
+                  {selectedItem.images.map((_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.paginationDot,
+                        { backgroundColor: index === selectedImageIndex ? '#4C66FF' : '#ccc' }
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
 
             {/* Close Button */}
             <TouchableOpacity style={styles.modalCloseIcon} onPress={handleCloseModal}>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>X</Text>
+              <Text style={styles.closeButtonText}>X</Text>
             </TouchableOpacity>
 
             {/* Details */}
@@ -329,6 +382,43 @@ const AdminManageFound = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+
+      {/* Full Screen Image Viewer */}
+      <Modal
+        visible={isImageViewerVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCloseImageViewer}
+      >
+        <View style={styles.fullScreenContainer}>
+          <TouchableOpacity
+            style={styles.closeFullScreenButton}
+            onPress={handleCloseImageViewer}
+          >
+            <Ionicons name="close" size={24} color="#fff" />
+          </TouchableOpacity>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            initialScrollIndex={selectedImageIndex}
+            contentOffset={{
+              x: selectedImageIndex * Dimensions.get('window').width,
+              y: 0
+            }}
+          >
+            {selectedItem?.images.map((image, index) => (
+              <View key={index} style={styles.fullScreenImageWrapper}>
+                <Image
+                  source={{ uri: image.url }}
+                  style={styles.fullScreenImage}
+                  resizeMode="contain"
+                />
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -337,44 +427,52 @@ const styles = StyleSheet.create({
   container: { 
     flex: 1, 
     backgroundColor: '#D9D9D9', 
-    padding: 5 
   },
   topSection: { 
     flexDirection: 'row', 
     alignItems: 'center', 
     marginTop: 30, 
-    marginBottom: 10 
+    marginBottom: 10,
+    marginLeft: 20, // Add marginLeft to move menu right
   },
   sidebarInline: { 
-    marginRight: 15 
+    marginRight: 15,
+    marginLeft: 15, // Add left margin to move hamburger icon right
   },
   pageTitle: { 
     fontSize: 25, 
     fontWeight: 'bold', 
     color: '#000', 
-    marginLeft: 85 
+    marginLeft: 65, // Adjusted to maintain spacing with moved hamburger
+    textAlign: 'center'
   },
   searchContainer: {
     flexDirection: 'row',
     backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: 'grey',
-    borderRadius: 5,
+    borderRadius: 25,
     alignItems: 'center',
     marginVertical: 15,
-    paddingHorizontal: 10,
-    width: '70%',
-    height: 40,
+    paddingHorizontal: 15,
+    width: '90%',
+    height: 45,
     alignSelf: 'center',
-    marginBottom: 3,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
   },
-  searchInput: { 
-    flex: 1, 
-    padding: 0, 
-    fontSize: 16 
+  searchInput: {
+    flex: 1,
+    padding: 10,
+    fontSize: 16,
   },
   searchButton: { 
     padding: 10 
+  },
+  searchIcon: {
+    width: 20,
+    height: 20,
   },
   scrollView: { 
     flex: 1,
@@ -450,94 +548,200 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalCard: {
-    width: 320,
-    height: 570,
-    backgroundColor: 'white',
-    borderRadius: 10,
     alignItems: 'center',
     padding: 20,
+  },
+  modalCard: {
+    width: '95%',
+    maxWidth: 400,
+    backgroundColor: 'white',
+    borderRadius: 20,
+    alignItems: 'center',
+    padding: 25,
     position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  modalImageContainer: {
+    width: '100%',
+    height: 250,
+    marginBottom: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8f8f8',
+    borderRadius: 15,
+  },
+  imageScrollView: {
+    width: '100%',
+  },
+  imageScrollViewContent: {
+    alignItems: 'center',
   },
   modalImage: {
-    width: 280,
-    height: 200,
-    resizeMode: 'contain',
-    marginBottom: 20,
-    borderRadius: 10,
+    width: Dimensions.get('window').width * 0.85,
+    height: 250,
+    borderRadius: 15,
   },
-  noImageContainer: {
-    width: 280,
-    height: 200,
-    backgroundColor: '#f0f0f0',
+  imageTouchable: {
+    width: Dimensions.get('window').width * 0.85,
+    height: 250,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fullScreenImageWrapper: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
-    borderRadius: 10,
+    backgroundColor: 'black',
+  },
+  fullScreenImage: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height * 0.8,
+    resizeMode: 'contain',
+  },
+  fullScreenModal: {
+    margin: 0,
+    backgroundColor: 'black',
+  },
+  closeFullScreenButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 10,
+    borderRadius: 20,
+    zIndex: 1,
+  },
+  closeFullScreenText: {
+    color: 'white',
+    fontSize: 18,
+  },
+  imagePaginationDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+    position: 'absolute',
+    bottom: -20,
+    width: '100%',
+  },
+  paginationDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginHorizontal: 4,
+    backgroundColor: '#ccc',
   },
   modalCloseIcon: {
     position: 'absolute',
-    top: -10,
-    right: -5,
+    top: 15,
+    right: 15,
     zIndex: 1,
-    backgroundColor: '#000',
-    borderRadius: 15,
-    width: 30,
-    height: 30,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    borderRadius: 20,
+    width: 35,
+    height: 35,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalDetails: {
+    width: '100%',
+    paddingHorizontal: 5,
+    marginBottom: 20,
   },
   modalText: {
     textAlign: 'left',
     width: '100%',
-    marginBottom: 10,
-    fontSize: 14,
-  },
-  modalDetails: {
-    width: '100%',
-    paddingHorizontal: 10,
-    marginBottom: 20,
+    marginBottom: 12,
+    fontSize: 15,
+    color: '#333',
+    lineHeight: 22,
   },
   description: {
-    fontSize: 14,
-    color: '#333',
-    marginBottom: 20,
+    fontSize: 15,
+    color: '#666',
+    marginBottom: 25,
+    lineHeight: 22,
+    fontStyle: 'italic',
   },
   actionButtons: {
     flexDirection: 'row',
-    marginTop: 5,
     justifyContent: 'space-between',
-    width: '90%',
+    width: '100%',
+    marginTop: 10,
   },
   printButton: {
     backgroundColor: '#FEE440',
     flex: 1,
-    marginRight: 5,
-    paddingVertical: 10,
-    borderRadius: 5,
+    marginRight: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   deleteButton: {
     backgroundColor: '#FF3B30',
     flex: 1,
-    marginLeft: 5,
-    paddingVertical: 10,
-    borderRadius: 5,
+    marginLeft: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   printButtonText: {
     color: '#000',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
   deleteButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '600',
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  fullScreenContainer: {
+    flex: 1,
+    backgroundColor: 'black',
+    position: 'relative',
+  },
+  fullScreenImageWrapper: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'black',
+  },
+  fullScreenImage: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height * 0.8,
+    resizeMode: 'contain',
+  },
+  closeFullScreenButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 2,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 12,
+    borderRadius: 25,
   },
 });
 

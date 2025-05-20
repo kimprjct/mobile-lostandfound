@@ -2,6 +2,55 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, SafeAreaView, Modal, ScrollView } from 'react-native';
 import { collection, query, where, orderBy, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { createNotification, notificationTypes } from '../services/NotificationService';
+
+// Add this function near the top of the file
+const getNotificationColor = (type) => {
+    switch (type) {
+        case 'found_request':
+            return '#4CAF50';
+        case 'claim_request':
+            return '#2196F3';
+        case 'claim_approved':
+        case 'found_approved':
+            return '#8BC34A';
+        case 'claim_rejected':
+        case 'found_rejected':
+            return '#F44336';
+        default:
+            return '#757575';
+    }
+};
+
+// Add this function before the Header component
+const formatTimestamp = (timestamp) => {
+  if (!timestamp) return 'N/A';
+
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffInMinutes = Math.floor((now - date) / (1000 * 60));
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  const diffInDays = Math.floor(diffInHours / 24);
+
+  if (diffInMinutes < 1) {
+    return 'Just now';
+  } else if (diffInMinutes < 60) {
+    return `${diffInMinutes} ${diffInMinutes === 1 ? 'minute' : 'minutes'} ago`;
+  } else if (diffInHours < 24) {
+    return `${diffInHours} ${diffInHours === 1 ? 'hour' : 'hours'} ago`;
+  } else if (diffInDays < 7) {
+    return `${diffInDays} ${diffInDays === 1 ? 'day' : 'days'} ago`;
+  } else {
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+};
 
 const Header = ({ navigation }) => {
     const [isDropdownVisible, setDropdownVisible] = useState(false);
@@ -71,25 +120,60 @@ const Header = ({ navigation }) => {
         setDropdownVisible(!isDropdownVisible);
     };
 
-    const getNotificationIcon = () => {
-        if (unreadCount > 0) {
-            return (
-                <View style={styles.notificationContainer}>
-                    <Image
-                        source={require('../assets/bell.png')}
-                        style={styles.notificationIcon}
-                    />
-                    <View style={styles.badge}>
-                        <Text style={styles.badgeText}>{unreadCount}</Text>
-                    </View>
-                </View>
-            );
+    const getNotificationIcon = (type) => {
+        switch (type) {
+            case 'found_item_submitted':
+                return <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />;
+            case 'lost_item_reported':
+                return <Ionicons name="search" size={24} color="#FF9800" />;
+            case 'claim_request':
+                return <Ionicons name="hand-left" size={24} color="#2196F3" />;
+            case 'found_request':
+                return <Ionicons name="location" size={24} color="#9C27B0" />;
+            case 'claim_approved':
+            case 'found_approved':
+                return <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />;
+            case 'claim_rejected':
+            case 'found_rejected':
+                return <Ionicons name="close-circle" size={24} color="#F44336" />;
+            default:
+                return <Ionicons name="notifications" size={24} color="#757575" />;
         }
-        return (
-            <Image
-                source={require('../assets/bell.png')}
-                style={styles.notificationIcon}
-            />
+    };
+
+    const handleNotificationClick = (notification) => {
+        setShowNotifications(false); // Close notifications modal
+
+        switch (notification.type) {
+            case 'claim_request':
+                navigation.navigate('ClaimRequests', {
+                    openModalForId: notification.itemId,
+                    claimId: notification.claimId
+                });
+                break;
+            case 'found_item_reported':
+                navigation.navigate('AdminManageFound', {
+                    openModalForId: notification.itemId
+                });
+                break;
+            case 'lost_item_reported':
+                navigation.navigate('AdminManageLost', {
+                    openModalForId: notification.itemId
+                });
+                break;
+            default:
+                console.log('Unknown notification type:', notification.type);
+        }
+    };
+
+    const handleApproveClaim = async () => {
+        // ... existing approval logic ...
+        await createNotification(
+            notificationTypes.CLAIM_APPROVED,
+            'Claim Approved',
+            `Claim for ${itemName} has been approved`,
+            itemId,
+            userId
         );
     };
 
@@ -113,7 +197,16 @@ const Header = ({ navigation }) => {
                     style={styles.notificationButton}
                     onPress={handleNotificationPress}
                 >
-                    {getNotificationIcon()}
+                    <View style={styles.notificationContainer}>
+                        <Ionicons name="notifications-outline" size={24} color="#333" />
+                        {unreadCount > 0 && (
+                            <View style={styles.badge}>
+                                <Text style={styles.badgeText}>
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
                 </TouchableOpacity>
 
                 {/* Admin Button and Dropdown */}
@@ -143,60 +236,57 @@ const Header = ({ navigation }) => {
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Notifications</Text>
+                            <Text style={styles.modalTitle}>Recent Activities</Text>
                             <TouchableOpacity 
                                 style={styles.closeButton}
                                 onPress={() => setShowNotifications(false)}
                             >
-                                <Text style={styles.closeButtonText}>✕</Text>
+                                <Ionicons name="close" size={20} color="#fff" />
                             </TouchableOpacity>
                         </View>
 
                         <ScrollView style={styles.notificationsList}>
                             {notifications.length === 0 ? (
-                                <Text style={styles.noNotifications}>No new notifications</Text>
+                                <View style={styles.emptyStateContainer}>
+                                    <Ionicons name="notifications-off-outline" size={50} color="#ccc" />
+                                    <Text style={styles.noNotifications}>No notifications yet</Text>
+                                </View>
                             ) : (
                                 notifications.map((notification) => (
-                                    <View key={notification.id} style={styles.notificationItem}>
-                                        <View style={styles.notificationHeader}>
+                                    <TouchableOpacity 
+                                        key={notification.id} 
+                                        style={[
+                                            styles.notificationItem,
+                                            notification.status === 'unread' && styles.unreadNotification
+                                        ]}
+                                        onPress={() => handleNotificationClick(notification)}
+                                    >
+                                        <View style={styles.notificationContent}>
                                             <View style={[
-                                                styles.statusDot,
-                                                notification.status === 'unread' && styles.unreadDot
-                                            ]} />
-                                            <Text style={styles.notificationTitle}>{notification.title}</Text>
+                                                styles.notificationIconContainer,
+                                                { backgroundColor: getNotificationColor(notification.type) }
+                                            ]}>
+                                                {getNotificationIcon(notification.type)}
+                                            </View>
+                                            <View style={styles.notificationTextContainer}>
+                                                <Text style={styles.notificationTitle}>
+                                                    {notification.description || notification.title}
+                                                </Text>
+                                                <Text style={styles.notificationTime}>
+                                                    {formatTimestamp(notification.createdAt)}
+                                                </Text>
+                                            </View>
+                                            <Ionicons 
+                                                name="chevron-forward" 
+                                                size={20} 
+                                                color="#ccc" 
+                                                style={styles.chevron}
+                                            />
                                         </View>
-                                        <Text style={styles.notificationMessage}>{notification.message}</Text>
-                                        <Text style={styles.notificationTime}>{notification.createdAt}</Text>
-                                        <TouchableOpacity 
-                                            style={styles.viewDetailsButton}
-                                            onPress={() => {
-                                                setShowNotifications(false);
-                                                setSelectedNotification(notification);
-                                            }}
-                                        >
-                                            <Text style={styles.viewDetailsText}>View Details</Text>
-                                        </TouchableOpacity>
-                                    </View>
+                                    </TouchableOpacity>
                                 ))
                             )}
                         </ScrollView>
-
-                        {selectedNotification?.itemData && selectedNotification.itemData.images && (
-                            <ScrollView 
-                                horizontal 
-                                showsHorizontalScrollIndicator={false}
-                                style={styles.modalImageScrollView}
-                            >
-                                {selectedNotification.itemData.images.map((image, index) => (
-                                    <Image 
-                                        key={index}
-                                        source={{ uri: image.url }}
-                                        style={styles.modalImage}
-                                        resizeMode="cover"
-                                    />
-                                ))}
-                            </ScrollView>
-                        )}
                     </View>
                 </View>
             </Modal>
@@ -212,20 +302,20 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: 15,
-        paddingTop: 30,
+        padding: 5,
+        paddingTop: 5,
         backgroundColor: '#fff',
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
     },
     logo: {
-        width: 50,
-        height: 50,
+        width: 80,
+        height: 80,
         resizeMode: 'contain',
     },
     titleContainer: {
         flex: 1,
-        marginLeft: 10,
+        marginLeft: 2,
     },
     title: {
         fontSize: 24,
@@ -238,11 +328,11 @@ const styles = StyleSheet.create({
     },
     notificationButton: {
         padding: 10,
-        marginRight: 10,
+        marginRight: 6,
     },
     notificationIcon: {
-        width: 24,
-        height: 24,
+        width: 28,
+        height: 28,
         resizeMode: 'contain',
     },
     adminContainer: {
@@ -250,14 +340,15 @@ const styles = StyleSheet.create({
     },
     adminButton: {
         backgroundColor: '#f0f0f0',
-        paddingVertical: 8,
+        paddingVertical: 9,
         paddingHorizontal: 15,
         borderRadius: 5,
+        marginRight: 10,
     },
     adminText: {
         color: 'black',
         fontWeight: 'normal',
-        fontSize: 18,
+        fontSize: 14,
     },
     dropdownMenu: {
         position: 'absolute',
@@ -287,129 +378,103 @@ const styles = StyleSheet.create({
     },
     badge: {
         position: 'absolute',
-        right: -6,
-        top: -3,
-        backgroundColor: 'red',
-        borderRadius: 10,
-        minWidth: 20,
-        height: 20,
+        right: -8,
+        top: -8,
+        backgroundColor: '#FF3B30',
+        borderRadius: 12,
+        minWidth: 24,
+        height: 24,
         justifyContent: 'center',
         alignItems: 'center',
+        borderWidth: 2,
+        borderColor: '#fff',
     },
     badgeText: {
-        color: 'white',
+        color: '#fff',
         fontSize: 12,
         fontWeight: 'bold',
     },
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        justifyContent: 'center',
-        alignItems: 'center',
     },
     modalContent: {
-        width: '90%',
-        maxHeight: '80%',
-        backgroundColor: 'white',
-        borderRadius: 15,
-        padding: 20,
+        flex: 1,
+        backgroundColor: '#fff',
+        marginTop: 100, // Increased from 60 to push content lower
+        maxHeight: '90%', // Add this to limit height
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        overflow: 'hidden',
     },
     modalHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 20,
-        paddingBottom: 10,
+        padding: 15, // Reduced from 20
+        backgroundColor: '#fff',
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
     },
     modalTitle: {
-        fontSize: 24,
+        fontSize: 20, // Reduced from 24
         fontWeight: 'bold',
         color: '#333',
-    },
-    closeButton: {
-        backgroundColor: '#000',
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    closeButtonText: {
-        color: '#fff',
-        fontSize: 18,
-        fontWeight: 'bold',
     },
     notificationsList: {
         flex: 1,
     },
     notificationItem: {
-        backgroundColor: '#f8f9fa',
-        padding: 15,
-        borderRadius: 10,
-        marginBottom: 10,
+        backgroundColor: '#fff',
+        padding: 12, // Reduced from 16
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
     },
-    notificationHeader: {
+    unreadNotification: {
+        backgroundColor: '#F8F9FA',
+        borderLeftWidth: 4,
+        borderLeftColor: '#007AFF',
+    },
+    notificationContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 8,
     },
-    statusDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: '#999',
-        marginRight: 8,
+    notificationIconContainer: {
+        width: 32, // Reduced from 40
+        height: 32, // Reduced from 40
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 8, // Reduced from 12
     },
-    unreadDot: {
-        backgroundColor: '#ff3b30',
-    },
-    notificationTitle: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: '#333',
+    notificationTextContainer: {
         flex: 1,
     },
-    notificationMessage: {
-        fontSize: 14,
-        color: '#666',
-        marginBottom: 8,
+    notificationTitle: {
+        fontSize: 14, // Reduced from 16
+        color: '#333',
+        marginBottom: 2, // Reduced from 4
+        lineHeight: 20, // Reduced from 22
     },
     notificationTime: {
-        fontSize: 12,
+        fontSize: 12, // Reduced from 13
         color: '#999',
-        marginBottom: 8,
+    },
+    chevron: {
+        marginLeft: 12,
+    },
+    emptyStateContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 40,
     },
     noNotifications: {
-        textAlign: 'center',
+        marginTop: 16,
         fontSize: 16,
-        color: '#666',
-        marginTop: 20,
-    },
-    viewDetailsButton: {
-        backgroundColor: '#4C66FF',
-        padding: 8,
-        borderRadius: 5,
-        alignSelf: 'flex-end',
-    },
-    viewDetailsText: {
-        color: '#fff',
-        fontSize: 14,
-        fontWeight: '500',
-    },
-    modalImageScrollView: {
-        width: '100%',
-        height: 250,
-        marginVertical: 10,
-    },
-    modalImage: {
-        width: 300,
-        height: 250,
-        borderRadius: 12,
-        marginRight: 10,
-        backgroundColor: '#f0f0f0',
-    },
+        color: '#999',
+        textAlign: 'center',
+    }
 });
 
 export default Header;

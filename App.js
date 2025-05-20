@@ -21,6 +21,7 @@ import ClaimRequests from './screens/ClaimRequests'; // Import ClaimRequests.js
 import FoundRequests from './screens/FoundRequests'; // Import FoundRequests.js
 import UserManagementScreen from './screens/UserManagement'; // Import UserManagement.js
 import ClaimHistoryScreen from './screens/ClaimHistory'; // Import ClaimHistory.js
+import AdminNotification from './screens/AdminNotification'; // Import AdminNotification.js
 
 const Stack = createStackNavigator();
 
@@ -178,6 +179,20 @@ const App = () => {
                 
                 {/* Admin Screens */}
                 <Stack.Screen name="HomeAdmin" component={HomeAdmin} />
+                <Stack.Screen name="AdminNotification" 
+                    component={AdminNotification}
+                    options={{
+                        title: 'Notifications',
+                        headerShown: true,
+                        headerStyle: {
+                            backgroundColor: '#fff',
+                        },
+                        headerTintColor: '#333',
+                        headerTitleStyle: {
+                            fontWeight: 'bold',
+                        },
+                    }}
+                />
                 <Stack.Screen name="AdminManageLost" component={AdminManageLost} />
                 <Stack.Screen name="AdminManageFound" component={AdminManageFound} />
                 <Stack.Screen name="ClaimRequests" component={ClaimRequests} />

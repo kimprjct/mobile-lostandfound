@@ -15,11 +15,20 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Header from '../components/AdminHeader';
 import SidebarMenu from '../components/sidebarmenu';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { 
+    collection, 
+    query, 
+    orderBy, 
+    onSnapshot, 
+    doc, 
+    updateDoc, 
+    addDoc, 
+    serverTimestamp 
+} from 'firebase/firestore';
+import { db, auth } from '../firebaseConfig'; // Add auth here
 import defaultImage from '../assets/Flashdrive.png'; // Import default image
 
-const ClaimRequestScreen = ({ navigation }) => {
+const ClaimRequestScreen = ({ navigation, route }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedClaimId, setSelectedClaimId] = useState(null);
   const [activeTab, setActiveTab] = useState('pending');
@@ -54,6 +63,18 @@ const ClaimRequestScreen = ({ navigation }) => {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (route.params?.openModalForId) {
+      // Find the claim with the matching ID
+      const claim = claimsData.find(claim => claim.id === route.params.openModalForId);
+      if (claim) {
+        openModal(claim.id);
+      }
+      // Clear the params after handling
+      navigation.setParams({ openModalForId: undefined });
+    }
+  }, [route.params?.openModalForId, claimsData]);
 
   const filteredClaims = claimsData.filter(claim => {
     const matchesSearch = 
@@ -101,15 +122,8 @@ const ClaimRequestScreen = ({ navigation }) => {
         // Create activity for admin dashboard
         await addDoc(collection(db, 'activities'), {
           type: 'claim_request_approved',
-          description: `Claim request for ${selectedClaim.itemName} by ${selectedClaim.userName} was approved`,
-          itemId: selectedClaim.id,
-          itemName: selectedClaim.itemName,
-          userId: selectedClaim.userId,
-          userName: selectedClaim.userName,
-          statusReason: systemInstructions,
-          status: 'unread',
-          title: 'Request Approved',
-          message: `Claim request for ${selectedClaim.itemName} was approved with standard claiming instructions`,
+          description: `Claim Request for ${selectedClaim.itemName} by ${selectedClaim.userName} was approved`,
+          referenceId: selectedClaim.id,
           createdAt: serverTimestamp()
         });
 
@@ -160,15 +174,8 @@ const ClaimRequestScreen = ({ navigation }) => {
               // Create activity for admin dashboard
               await addDoc(collection(db, 'activities'), {
                 type: 'claim_request_rejected',
-                description: `Claim request for ${selectedClaim.itemName} by ${selectedClaim.userName} was rejected`,
-                itemId: selectedClaim.id,
-                itemName: selectedClaim.itemName,
-                userId: selectedClaim.userId,
-                userName: selectedClaim.userName,
-                statusReason: rejectionMessage,
-                status: 'unread',
-                title: 'Request Rejected',
-                message: `Claim request for ${selectedClaim.itemName} was rejected with reason: ${reason}`,
+                description: `Claim Request for ${selectedClaim.itemName} by ${selectedClaim.userName} was rejected`,
+                referenceId: selectedClaim.id,
                 createdAt: serverTimestamp()
               });
 
@@ -186,31 +193,131 @@ const ClaimRequestScreen = ({ navigation }) => {
     }
   };
 
+  const handleItemRetrieval = async (claim) => {
+    Alert.alert(
+        "Confirm Item Retrieval",
+        "Are you confirming that the claimant has physically retrieved the item?",
+        [
+            {
+                text: "Cancel",
+                style: "cancel"
+            },
+            {
+                text: "Confirm Retrieval",
+                onPress: async () => {
+                    try {
+                        // Update claim_requests with retrieval confirmation
+                        await updateDoc(doc(db, 'claim_requests', claim.id), {
+                            status: 'retrieved',
+                            retrievalDate: serverTimestamp(),
+                            confirmedBy: auth.currentUser.uid,
+                            retrievalConfirmedBy: auth.currentUser.displayName
+                        });
+
+                        // Create activity record for retrieval
+                        await addDoc(collection(db, 'activities'), {
+                            type: 'item_retrieved',
+                            description: `${claim.userName} has retrieved the ${claim.itemName}`,
+                            itemId: claim.id,
+                            createdAt: serverTimestamp(),
+                            userId: claim.userId,
+                            retrievalDate: serverTimestamp(),
+                            confirmedBy: auth.currentUser.displayName
+                        });
+
+                        Alert.alert(
+                            "Success", 
+                            "Item retrieval has been confirmed and recorded in Claim History"
+                        );
+                    } catch (error) {
+                        console.error('Error confirming retrieval:', error);
+                        Alert.alert("Error", "Failed to confirm item retrieval");
+                    }
+                }
+            }
+        ]
+    );
+  };
+
+  const handleClaimed = async (claim) => {
+    Alert.alert(
+      'Confirm Claim',
+      'Are you sure the claimant has physically claimed this item?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            try {
+              await updateDoc(doc(db, 'claim_requests', claim.id), {
+                status: 'retrieved',
+                retrievalDate: serverTimestamp(),
+                retrievalConfirmedBy: auth?.currentUser?.displayName || 'admin',
+              });
+              await addDoc(collection(db, 'activities'), {
+                type: 'claim_item_claimed',
+                description: `${claim.userName} has claimed the found item: ${claim.itemName}`,
+                itemId: claim.id,
+                createdAt: serverTimestamp(),
+                userId: claim.userId,
+              });
+              Alert.alert('Success', 'Item marked as claimed and moved to Claim History.');
+              setModalVisible(false);
+            } catch (error) {
+              console.error('Error marking as claimed:', error);
+              Alert.alert('Error', 'Failed to mark as claimed.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const selectedClaim = claimsData.find((c) => c.id === selectedClaimId);
+
+  const getStatusStyle = (status) => {
+    switch (status) {
+      case 'pending':
+        return styles.pendingStatus;
+      case 'approved':
+        return styles.approvedStatus;
+      case 'rejected':
+        return styles.rejectedStatus;
+      default:
+        return styles.statusText;
+    }
+  };
 
   const renderCard = (item) => (
     <TouchableOpacity
-      key={item.id}
-      style={styles.horizontalCard}
-      onPress={() => openModal(item.id)}
+        key={item.id}
+        style={styles.horizontalCard}
+        onPress={() => openModal(item.id)}
     >
-      <View style={styles.imageContainer}>
-        <Image 
-          source={{ uri: item.images && item.images.length > 0 ? item.images[0].url : null }} 
-          style={styles.cardImage} 
-          resizeMode="cover" 
-        />
-      </View>
-      <View style={styles.cardDetails}>
-        <Text style={styles.itemName} numberOfLines={1}>{item.itemName}</Text>
-        <Text style={styles.itemDetail}>Claim by: {item.userName}</Text>
-        <Text style={styles.itemDetail}>Date Requested: {item.dateFound}</Text>
-        <Text style={[styles.itemDetail, styles.statusText]}>
-          Status: <Text style={item.status === 'pending' ? styles.pendingStatus : item.status === 'approved' ? styles.approvedStatus : styles.rejectedStatus}>
-            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-          </Text>
-        </Text>
-      </View>
+        <View style={styles.imageContainer}>
+            <Image 
+                source={{ uri: item.images && item.images.length > 0 ? item.images[0].url : null }} 
+                style={styles.cardImage} 
+                resizeMode="cover" 
+            />
+        </View>
+        <View style={styles.cardDetails}>
+            <Text style={styles.itemName} numberOfLines={1}>{item.itemName}</Text>
+            <Text style={styles.itemDetail}>Claim by: {item.userName}</Text>
+            <Text style={styles.itemDetail}>Date Requested: {item.dateFound}</Text>
+            <Text style={[styles.itemDetail, styles.statusText]}>
+                Status: <Text style={getStatusStyle(item.status)}>
+                    {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                </Text>
+            </Text>
+            {/* Complete button for approved tab */}
+            {activeTab === 'approved' && (
+              <TouchableOpacity style={styles.completeButton} onPress={() => handleClaimed(item)}>
+                <Ionicons name="checkmark-circle" size={18} color="#fff" style={{ marginRight: 5 }} />
+                <Text style={styles.completeButtonText}>Complete</Text>
+              </TouchableOpacity>
+            )}
+        </View>
     </TouchableOpacity>
   );
 
@@ -254,18 +361,30 @@ const ClaimRequestScreen = ({ navigation }) => {
           </View>
 
           <View style={styles.actionButtons}>
-            <TouchableOpacity
-              style={styles.approveButton}
-              onPress={() => updateStatus(selectedClaimId, 'approved')}
-            >
-              <Text style={{ color: 'white', fontWeight: 'bold' }}>APPROVE</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.rejectButton}
-              onPress={() => updateStatus(selectedClaimId, 'rejected')}
-            >
-              <Text style={{ color: 'white', fontWeight: 'bold' }}>REJECT</Text>
-            </TouchableOpacity>
+            {/* Only show Approve/Reject if pending */}
+            {selectedClaim?.status === 'pending' && (
+              <>
+                <TouchableOpacity
+                  style={styles.approveButton}
+                  onPress={() => updateStatus(selectedClaimId, 'approved')}
+                >
+                  <Text style={{ color: 'white', fontWeight: 'bold' }}>APPROVE</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.rejectButton}
+                  onPress={() => updateStatus(selectedClaimId, 'rejected')}
+                >
+                  <Text style={{ color: 'white', fontWeight: 'bold' }}>REJECT</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {/* Only show Complete if approved */}
+            {selectedClaim?.status === 'approved' && (
+              <TouchableOpacity style={styles.completeButton} onPress={() => handleClaimed(selectedClaim)}>
+                <Ionicons name="checkmark-circle" size={18} color="#fff" style={{ marginRight: 5 }} />
+                <Text style={styles.completeButtonText}>Complete</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -338,8 +457,8 @@ const styles = StyleSheet.create({
   },
   menuWrapper: {
     position: 'absolute',
-    top: 130,
-    left: 10,
+    top: 120,
+    left: 10, // Increased from 10 to 20
     zIndex: 999,
   },
   sidebarWrapper: {
@@ -349,12 +468,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingLeft: 5, // Add padding to prevent icon cutoff
   },
   title: {
     fontSize: 25,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginTop: 45,
+    marginTop: 30,
     marginBottom: 20,
   },
   searchContainer: {
@@ -423,7 +543,8 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 3,
     overflow: 'hidden',
-    height: 120,
+    minHeight: 100,
+    alignItems: 'center',
   },
   imageContainer: {
     width: 120,
@@ -584,6 +705,23 @@ const styles = StyleSheet.create({
   noImageText: {
     fontSize: 16,
     color: '#666',
+  },
+  completeButton: {
+    backgroundColor: 'green',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    paddingVertical: 6,
+    borderRadius: 5,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+  },
+  completeButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+    marginLeft: 5,
   },
 });
 
